@@ -28,6 +28,7 @@ enum UserRole {
 model User {
   id           String       @id @default(uuid()) @db.Uuid
   identitySub  String       @unique
+  /// SQL migration enforces unique lower(btrim(email)) for non-null emails.
   email        String?
   displayName  String?
   phone        String?
@@ -36,6 +37,11 @@ model User {
   createdAt    DateTime     @default(now())
   roles        UserProfile[]
   enrollments  Enrollment[]
+  employeeProfile EmployeeProfile?
+  modulePermissions ModulePermission[]
+  materialViews MaterialView[]
+  appSessions AppSession[]
+  notificationReceipts NotificationRecipient[]
   studentCredential StudentCredential?
   studentSessions StudentSession[]
   studentAuthTokens StudentAuthToken[]
@@ -76,6 +82,7 @@ model Document {
   createdById String        @db.Uuid
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+  materialViews MaterialView[]
   versions    DocumentVersion[]
   studyPages  DocumentStudyPage[]
   grants      DocumentPlan[]
@@ -111,6 +118,12 @@ model DocumentVersion {
   s3UploadId          String?       @unique
   pageCount           Int?
   previewReady        Boolean       @default(false)
+  verifiedAt          DateTime?
+  verifiedObjectVersionId String?
+  verificationPolicy  String?
+  publishRequestedById String?      @db.Uuid
+  publicationRequestRevision Int @default(0)
+  publicationFailure  String?
   failureReason       String?
   processingAttempt   Int           @default(0)
   queuedAt            DateTime?
@@ -391,4 +404,107 @@ model DocumentStudyPage {
   version    DocumentVersion @relation(fields:[versionId],references:[id],onDelete:Restrict)
   @@unique([userId,documentId,versionId,page])
   @@index([documentId,versionId])
+}
+
+model Notification {
+  id String @id @default(uuid()) @db.Uuid
+  kind String
+  title String
+  body String
+  createdById String @db.Uuid
+  createdAt DateTime @default(now())
+  eventKey String? @unique
+  courseIds String[]
+  programmeIds String[]
+  planIds String[]
+  subjectId String?
+  sourceId String? @db.Uuid
+  attachments NotificationAttachment[]
+  recipients NotificationRecipient[]
+  @@index([createdAt, id])
+  @@index([createdById, createdAt])
+}
+model NotificationRecipient {
+  notificationId String @db.Uuid
+  userId String @db.Uuid
+  readAt DateTime?
+  notification Notification @relation(fields:[notificationId],references:[id],onDelete:Cascade)
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@id([notificationId,userId])
+  @@index([userId,readAt,notificationId])
+}
+model NotificationAttachment {
+  id String @id @default(uuid()) @db.Uuid
+  notificationId String @db.Uuid
+  name String
+  mimeType String
+  size Int
+  data Bytes
+  notification Notification @relation(fields:[notificationId],references:[id],onDelete:Cascade)
+  @@index([notificationId])
+}
+
+model LoginChallenge {
+  id String @id @default(uuid()) @db.Uuid
+  userId String? @db.Uuid
+  email String
+  codeHash String
+  salt String
+  attempts Int @default(0)
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([email,createdAt])
+  @@index([expiresAt])
+}
+model AppSession {
+  deviceHash String?
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  email String
+  tokenHash String @unique
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@index([userId,revokedAt])
+  @@index([expiresAt])
+  @@index([userId,deviceHash])
+}
+
+model EmployeeProfile {
+ userId String @id @db.Uuid
+ employeeCode String
+ department String
+ designation String
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+}
+model ModulePermission {
+ userId String @db.Uuid
+ module String
+ canView Boolean @default(false)
+ canManage Boolean @default(false)
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ @@id([userId,module])
+}
+model WatermarkSettings {
+ id String @id @default("default")
+ position String @default("center")
+ color String @default("#64748b")
+ opacity Float @default(0.12)
+ rotation Int @default(-20)
+ fontSize Int @default(24)
+ revision Int @default(0)
+}
+model MaterialView {
+ userId String @db.Uuid
+ documentId String @db.Uuid
+ firstOpenedAt DateTime @default(now())
+ lastOpenedAt DateTime @default(now())
+ opens Int @default(1)
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ document Document @relation(fields:[documentId],references:[id],onDelete:Cascade)
+ @@id([userId,documentId])
+ @@index([lastOpenedAt])
 }

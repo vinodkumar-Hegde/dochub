@@ -31,7 +31,7 @@ export async function assertWorkerPrerequisites(run: Runner = execute): Promise<
     await fs.writeFile(sample, 'DOCUSEND ClamAV scanner readiness check\n', { mode: 0o600 });
     try {
       // A real scan, not --version: missing/outdated signature databases fail the scan.
-      await run('clamscan', ['--no-summary', sample], 90_000);
+      await run('clamscan', ['--no-summary', '--fail-if-cvd-older-than=3', sample], 90_000);
     } catch (error) {
       throw new Error('PDF worker requires a functioning ClamAV scanner and loaded signature database. Update signatures before consuming SQS messages.', { cause: error });
     }

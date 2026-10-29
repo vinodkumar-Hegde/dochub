@@ -1,0 +1,103 @@
+name: dochub
+x-api: &api
+  image: dochub-api:${IMAGE_TAG:-local}
+  build: ./services/api
+  environment: &api-env
+    NODE_ENV: ${NODE_ENV:-production}
+    AWS_REGION: ${AWS_REGION:?Set AWS_REGION}
+    S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET}
+    SQS_QUEUE_URL: ${SQS_QUEUE_URL:?Set SQS_QUEUE_URL}
+    CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN}
+    SES_FROM_EMAIL: ${SES_FROM_EMAIL:?Set SES_FROM_EMAIL}
+    MAX_PDF_BYTES: ${MAX_PDF_BYTES:-10737418240}
+    PDF_RENDER_CONCURRENCY: ${PDF_RENDER_CONCURRENCY:-2}
+    PDF_UPLOAD_CONCURRENCY: ${PDF_UPLOAD_CONCURRENCY:-2}
+    PDF_VERIFICATION_POLICY: ${PDF_VERIFICATION_POLICY:-clamav-poppler-v1}
+    PREVIEW_CDN_ORIGIN: ${PREVIEW_CDN_ORIGIN:-}
+    PREVIEW_CDN_KEY_PAIR_ID: ${PREVIEW_CDN_KEY_PAIR_ID:-}
+    PREVIEW_CDN_PRIVATE_KEY_FILE: ${PREVIEW_CDN_PRIVATE_KEY_FILE:-}
+    PREVIEW_CDN_TTL_SECONDS: ${PREVIEW_CDN_TTL_SECONDS:-60}
+    PDF_WORKER_IMAGE: ${PDF_WORKER_IMAGE:-}
+    PORT: 3001
+    DATABASE_URL: postgresql://${APP_DB_USER:-dochub_app}:${APP_DB_PASSWORD:?Set APP_DB_PASSWORD}@db:5432/${POSTGRES_DB:-dochub}?schema=public
+    TRUST_PROXY_HOPS: 1
+  init: true
+  restart: unless-stopped
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  depends_on:
+    db: {condition: service_healthy}
+  logging:
+    driver: json-file
+    options: {max-size: '10m', max-file: '3'}
+services:
+  db:
+    image: dochub-db:${IMAGE_TAG:-local}
+    build:
+      context: ./deploy
+      dockerfile: postgres.Dockerfile
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dochub}
+      POSTGRES_USER: ${POSTGRES_USER:-dochub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      APP_DB_USER: ${APP_DB_USER:-dochub_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  migrate:
+    <<: *api
+    restart: 'no'
+    profiles: [ops]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dochub}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-dochub}?schema=public
+    command: [npx, prisma, migrate, deploy]
+  admin:
+    <<: *api
+    restart: 'no'
+    profiles: [ops]
+    environment:
+      <<: *api-env
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+    command: [node, dist/bootstrap-admin.js]
+  av-update:
+    image: dochub-api:${IMAGE_TAG:-local}
+    build: ./services/api
+    profiles: [ops]
+    user: clamav
+    command: [freshclam, --config-file=/app/freshclam.conf, --stdout]
+    volumes: [clamav-data:/var/lib/clamav]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  api:
+    <<: *api
+    command: [node, dist/server.js]
+    volumes: [clamav-data:/var/lib/clamav:ro]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  worker:
+    <<: *api
+    command: [node, dist/worker.js]
+    volumes: [clamav-data:/var/lib/clamav:ro]
+    stop_grace_period: 60s
+  web:
+    image: dochub-web:${IMAGE_TAG:-local}
+    build: .
+    ports: ['127.0.0.1:${WEB_PORT:-8080}:8080']
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+volumes:
+  postgres-data:
+  clamav-data:

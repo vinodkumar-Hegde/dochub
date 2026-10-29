@@ -1,0 +1,93 @@
+name: Verify
+on:
+  push:
+    branches: [dev, prod, 'feature/**']
+  pull_request:
+    branches: [dev, prod]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: dochub_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:ci-test-only@localhost:5432/dochub_test?schema=public
+      AWS_REGION: ap-south-1
+      S3_BUCKET: ci-private-bucket
+      SQS_QUEUE_URL: https://sqs.ap-south-1.amazonaws.com/000000000000/ci
+      CORS_ORIGIN: http://localhost:5190
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/api/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - run: npm ci
+      - run: npm ci
+        working-directory: services/api
+      - run: npm run db:generate && npm run db:migrate && npm run typecheck && npm test
+        working-directory: services/api
+      - run: node --import tsx --test tests/*.integration.ts
+        working-directory: services/api
+      - run: node --import ./services/api/node_modules/tsx/dist/loader.mjs --test tests/unit/*.test.ts
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Browser regression checks
+        env:
+          VITE_API_ORIGIN: http://localhost:3001
+        run: |
+          npm run dev > /tmp/dochub-vite.log 2>&1 &
+          npm run test:ui
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-results
+          path: test-results/
+      - run: npm audit --audit-level=moderate && npm audit --prefix services/api --audit-level=moderate
+  containers:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_TAG: ci
+      NODE_ENV: development
+      POSTGRES_PASSWORD: ci-owner-only
+      APP_DB_PASSWORD: ci-app-only
+      ADMIN_EMAIL: admin@example.com
+      CORS_ORIGIN: http://localhost:8080
+      AWS_REGION: ap-south-1
+      S3_BUCKET: ci-private-bucket
+      SQS_QUEUE_URL: https://sqs.ap-south-1.amazonaws.com/000000000000/ci
+      SES_FROM_EMAIL: login@example.com
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/postgres.Dockerfile -t dochub-db:ci deploy
+      - run: docker build -t dochub-web:ci .
+      - run: docker build --target test -t dochub-api-test:ci services/api
+      - run: docker build -t dochub-api:ci services/api
+      - name: Fresh Docker database and runtime smoke test
+        run: |
+          docker compose up -d db
+          docker compose run --rm migrate
+          docker compose run --rm admin
+          docker compose run --rm admin
+          docker compose up -d api web
+          curl --fail --retry 12 --retry-delay 2 --retry-connrefused http://localhost:8080/api/health/ready
+          docker compose exec -T api node --input-type=module -e 'import {PrismaClient} from "@prisma/client"; const db=new PrismaClient(); const [role]=await db.$queryRaw`SELECT rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=current_user`; if(role.rolsuper||role.rolcreatedb||role.rolcreaterole||process.env.POSTGRES_PASSWORD)process.exit(1); await db.$disconnect();'
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --tail=100
+      - name: Cleanup test containers
+        if: always()
+        run: docker compose down -v

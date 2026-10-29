@@ -1,3 +1,4 @@
+import {useCanManage} from './WorkspaceHeader';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type DragEvent } from 'react';
 import { FileText, Eye, Upload, Search, RefreshCw, CheckCircle2, RotateCcw, Trash2, X, AlertCircle, LockKeyhole, FolderOpen, ArrowRight } from 'lucide-react';
 import { DocumentPreview } from './DocumentPreview';
@@ -24,6 +25,8 @@ const active = new Set(['UPLOADING','QUEUED','PROCESSING']);
 const bytesLabel = (bytes: string | undefined) => bytes ? `${(Number(bytes) / 1024 / 1024).toFixed(1)} MB` : '—';
 
 export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onOpenAcademicMapping}:Props) {
+  const canManage=useCanManage('Uploads');
+  const listRequest=useRef(0),listInFlight=useRef(0);
   const [catalog,setCatalog] = useState<AcademicCatalog>(() => ({courses,plans,subjects,programmes}));
   const [catalogLoading,setCatalogLoading] = useState(true);
   const [catalogError,setCatalogError] = useState('');
@@ -104,24 +107,26 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
     setFile(chosen);
     if (chosen) setTitle(previous => previous.trim() || chosen.name.replace(/\.pdf$/i,''));
   };
-  const refresh = useCallback(async (append = false, pageCursor?: string) => {
-    if (!append) setLoading(true);
+  const refresh = useCallback(async (append = false, pageCursor?: string, quiet=false) => {
+    if(quiet&&listInFlight.current)return;const request=++listRequest.current;listInFlight.current++;
+    if (!append&&!quiet) setLoading(true);
     try {
       const page = await documentApi.list({ courseId, programmeId, subjectId:subjectFilter||undefined,folderId:folderFilter||undefined, query: query.trim() || undefined, ...(append && pageCursor ? { cursor: pageCursor } : {}) });
+      if(request!==listRequest.current)return;
       setRows(previous => append ? [...previous, ...page.items] : page.items);
       setCursor(page.nextCursor);
       setError('');
       if (!append) countCallback.current?.(page.total, page.publishedTotal);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to load uploads');
-    } finally { setLoading(false); }
+    } finally { listInFlight.current--;if(request===listRequest.current&&!quiet)setLoading(false); }
   }, [courseId,programmeId,subjectFilter,folderFilter,query]);
 
   useEffect(() => { const timeout = setTimeout(() => void refresh(), 250); return () => clearTimeout(timeout); }, [refresh]);
   useEffect(() => {
     const interval = setInterval(() => {
-      if (rows.some(r => active.has(r.latestVersion?.state ?? r.status) || (r.latestVersion?.state === 'READY' && !r.latestVersion.canPublish))) void refresh();
-    }, 10_000);
+      if(document.visibilityState==='visible')void refresh(false,undefined,true);
+    }, rows.some(r=>active.has(r.latestVersion?.state??r.status)||r.latestVersion?.publishWhenReady)?2500:5000);
     return () => clearInterval(interval);
   }, [rows,refresh]);
 
@@ -278,13 +283,23 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
     try {
       const selection:UploadSelection = { title:title.trim(),courseId:selectedCourse,programmeId:formProgramme,subjectId:formSubject,folderId:formFolder||null,planIds:formPlans,mappingRevision:programmeContext?.programme.mappingRevision };
       await uploadPdf(selection,file,setProgress,abort.signal,replaceId);
-      setModal(false);setNotice('PDF uploaded. We’re checking the file and preparing its pages. Publish will become available when the status shows “Ready to publish”.');
+      setModal(false);setNotice('PDF uploaded. We’re checking the file and preparing its pages. Choose “Publish when ready” from the file options to publish automatically after preparation.');
       setFile(null);setProgress(null);await refresh();
     } catch (cause) {
       setProgress(null);
       await refresh();
       setFormError(cause instanceof Error ? cause.message : 'Upload failed');
     } finally { controller.current=null;setActionBusy(''); }
+  };
+  const setPublicationIntent = async (row:DocumentRow,enabled:boolean) => {
+    if(!row.latestVersion)return;
+    setActionBusy(row.id);setError('');setNotice('');
+    try{
+      await documentApi.publicationIntent(row.id,row.latestVersion.id,enabled);
+      setNotice(enabled?'Publication scheduled. This PDF will be published automatically when its checks and page preparation finish.':'Automatic publication cancelled. You can publish manually when ready.');
+      setOpenDocumentOptions(null);await refresh();
+    }catch(cause){setError(cause instanceof Error?cause.message:'Unable to update automatic publication');}
+    finally{setActionBusy('');}
   };
   const runAction = async (id:string, action:'publish'|'retry'|'delete'|'abort',versionId?:string) => {
     if (action==='delete' && !window.confirm('Remove this document from DocHub? A secure audit record and retained object version will remain.')) return;
@@ -302,7 +317,7 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
   };
   return <>
     <div className="a-titlebar"><div><h1>Uploads</h1><p>Course → Programme → Subject → Materials</p></div>
-      <button className="a-btn primary" type="button" disabled={!liveCourses.length || !!actionBusy || catalogLoading || !!catalogError} onClick={()=>openUpload()}><Upload size={16}/> Upload PDF</button>
+      <button className="a-btn primary" type="button" disabled={!canManage||!liveCourses.length || !!actionBusy || catalogLoading || !!catalogError} onClick={()=>openUpload()}><Upload size={16}/> Upload PDF</button>
     </div>
     {error && <p role="alert" className="upload-feedback upload-error"><AlertCircle size={16}/>{error}<button type="button" onClick={reloadAll}>Reload</button></p>}
     {catalogError && <p role="alert" className="upload-feedback upload-error"><AlertCircle size={16}/>Academic catalogue: {catalogError}<button type="button" onClick={()=>void refreshCatalog()}>Try again</button></p>}
@@ -313,15 +328,15 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
       <label>Programme <select aria-label="Programme filter" value={programmeId} disabled={!courseId} onChange={e=>{setProgrammeId(e.target.value);setSubjectFilter('');setFolderFilter('')}}><option value="">{courseId?'All programmes':'Select course first'}</option>{visibleProgrammes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
       <label>Subject <select value={subjectFilter} onChange={e=>{setSubjectFilter(e.target.value);setFolderFilter('')}} disabled={!programmeId}><option value="">All subjects</option>{folderSubjectOptions.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
       <label className="a-search"><Search size={16}/><input aria-label="Find uploaded documents" placeholder="Find materials" value={query} onChange={e=>setQuery(e.target.value)}/></label>
-      <button className="a-btn" type="button" onClick={reloadAll} disabled={loading || catalogLoading}><RefreshCw size={15}/> Refresh</button>
+
     </div>
     <ProgrammeCascadeStrip programmeId={programmeId} />
     {courseId&&programmeId&&subjectFilter&&<section className="a-panel upload-folder-panel" aria-label="Subject folders">
       <div className="upload-folder-heading">
         <div className="upload-folder-title"><strong>Subject folders</strong><span>Organize study materials by folder. Drag PDFs into a folder to move them.</span></div>
         <div className="a-actions">
-          {clipboard&&<button className="a-btn upload-clipboard-button" type="button" onClick={pasteInto} disabled={folderBusy}><ClipboardPaste size={15}/> Paste {clipboard.type==='folder'?'folder':'PDF'}</button>}
-          <button className="a-btn upload-create-button" type="button" onClick={()=>openFolderEditor()} disabled={folderBusy}><FolderPlus size={16}/> New folder</button>
+          {clipboard&&<button className="a-btn upload-clipboard-button" type="button" onClick={pasteInto} disabled={folderBusy||!canManage}><ClipboardPaste size={15}/> Paste {clipboard.type==='folder'?'folder':'PDF'}</button>}
+          <button className="a-btn upload-create-button" type="button" onClick={()=>openFolderEditor()} disabled={folderBusy||!canManage}><FolderPlus size={16}/> New folder</button>
         </div>
       </div>
       <div className="upload-folder-grid" aria-label="Folder destinations">
@@ -346,7 +361,7 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
               <div className="upload-menu-heading">{folder.name}</div>
               <button role="menuitem" type="button" disabled={folderBusy||folder.locked} onClick={()=>openFolderEditor(folder)}><Pencil size={16}/> Rename & color</button>
               <button role="menuitemcheckbox" aria-checked={folder.hidden} type="button" disabled={folderBusy||folder.locked} onClick={()=>void folderAction(()=>folderApi.update(folder,{hidden:!folder.hidden}))}>{folder.hidden?<EyeIcon size={16}/>:<EyeOff size={16}/>} {folder.hidden?'Make visible':'Hide folder'} {folder.hidden&&<Check size={15} className="upload-menu-check"/>}</button>
-              <button role="menuitemcheckbox" aria-checked={folder.locked} type="button" disabled={folderBusy} onClick={()=>void folderAction(()=>folderApi.update(folder,{locked:!folder.locked}))}>{folder.locked?<Unlock size={16}/>:<Lock size={16}/>} {folder.locked?'Unlock folder':'Lock folder'} {folder.locked&&<Check size={15} className="upload-menu-check"/>}</button>
+              <button role="menuitemcheckbox" aria-checked={folder.locked} type="button" disabled={folderBusy||!canManage} onClick={()=>void folderAction(()=>folderApi.update(folder,{locked:!folder.locked}))}>{folder.locked?<Unlock size={16}/>:<Lock size={16}/>} {folder.locked?'Unlock folder':'Lock folder'} {folder.locked&&<Check size={15} className="upload-menu-check"/>}</button>
               <div className="upload-menu-separator" role="separator" />
               <div className="upload-menu-label">Student permissions</div>
               <button role="menuitemcheckbox" aria-checked={folder.allowDownload} type="button" disabled={folderBusy||folder.locked} onClick={()=>void folderAction(()=>folderApi.update(folder,{allowDownload:!folder.allowDownload}))}><Download size={16}/> Allow download <span className="upload-menu-status">{folder.allowDownload?'On':'Off'}</span></button>
@@ -378,13 +393,14 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
           </div></td>
           <td>{liveProgrammes.find(p=>p.id===row.programmeId)?.name ?? '—'}<small>{liveCourses.find(c=>c.id===row.courseId)?.name??'Course'}</small></td>
           <td>{liveSubjects.find(s=>s.id===row.subjectId)?.name ?? '—'}{row.folderId&&<small><FolderOpen size={12}/> {folders.find(f=>f.id===row.folderId)?.name??'Folder'}</small>}</td>
-          <td>{current?.pageCount ?? '—'}</td><td><span className={`upload-status status-${preparingPages ? 'PROCESSING' : current?.state ?? row.status}`}>{statusText}</span>{preparingPages && <small>Publish becomes available when all pages are ready. Status updates automatically.</small>}{current?.failureReason && current.state === 'FAILED' && <small className="upload-failure" title={current.failureReason}>{current.failureReason}</small>}</td>
+          <td>{current?.pageCount ?? '—'}</td><td><span className={`upload-status status-${preparingPages ? 'PROCESSING' : current?.state ?? row.status}`}>{statusText}</span>{current?.publishWhenReady ? <small>{current.state==='FAILED'||current.state==='QUARANTINED'?'Automatic publication is blocked by a processing failure.':'Will publish automatically when preparation finishes.'}</small> : preparingPages && <small>Choose “Publish when ready” in file options, or publish manually after preparation.</small>}{current?.publicationFailure && <small className="upload-failure">Automatic publication paused: {current.publicationFailure}</small>}{current?.failureReason && current.state === 'FAILED' && <small className="upload-failure" title={current.failureReason}>{current.failureReason}</small>}</td>
           <td><div className="upload-actions">
             <UploadsActionMenu label={`Options for ${row.title}`} open={openDocumentOptions===row.id}
               onOpenChange={next=>{setOpenDocumentOptions(next?row.id:null);setOpenFolderOptions(null)}}>
               <div className="upload-menu-heading" title={row.title}>{row.title}</div>
               {(row.status==='PUBLISHED'||current?.state==='READY')&&<button role="menuitem" type="button" onClick={()=>{setPreview({id:row.id,title:row.title});setOpenDocumentOptions(null)}}><Eye size={16}/> Preview</button>}
               {row.canManage&&current?.state==='UPLOADING'&&<button role="menuitem" disabled={!!actionBusy} onClick={()=>void runAction(row.id,'abort',current.id)}>Cancel upload</button>}
+              {row.canManage&&current&&(current.publishWhenReady||['UPLOADING','QUEUED','PROCESSING','READY'].includes(current.state))&&(!current.canPublish||current.publishWhenReady)&&<button role="menuitemcheckbox" aria-checked={current.publishWhenReady} disabled={!!actionBusy} onClick={()=>void setPublicationIntent(row,!current.publishWhenReady)}><CheckCircle2 size={16}/> {current.publishWhenReady?'Cancel automatic publication':'Publish when ready'}</button>}
               {row.canManage&&current?.state==='READY'&&<button role="menuitem" disabled={!!actionBusy || !current.canPublish} onClick={()=>void runAction(row.id,'publish')}><CheckCircle2 size={16}/> Publish</button>}
               {row.canManage&&current?.state==='FAILED'&&<button role="menuitem" disabled={!!actionBusy} onClick={()=>void runAction(row.id,'retry',current.id)}><RotateCcw size={16}/> Retry</button>}
               {row.canManage&&['PUBLISHED','READY','FAILED'].includes(current?.state??'')&&<button role="menuitem" disabled={!!actionBusy} onClick={()=>{openUpload(row);setOpenDocumentOptions(null)}}><Upload size={16}/> Replace PDF</button>}
@@ -396,7 +412,7 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
                 <div className="upload-menu-separator" role="separator"/>
                 <button role="menuitem" disabled={folderBusy||row.locked} onClick={()=>{setClipboard({type:'file',id:row.id,title:row.title});setOpenDocumentOptions(null)}}><Copy size={16}/> Copy PDF</button>
                 <button role="menuitemcheckbox" aria-checked={row.hidden} disabled={folderBusy||row.locked} onClick={()=>void folderAction(()=>folderApi.organize(row.id,row.revision,{hidden:!row.hidden}))}>{row.hidden?<EyeIcon size={16}/>:<EyeOff size={16}/>} {row.hidden?'Make visible':'Hide PDF'}</button>
-                <button role="menuitemcheckbox" aria-checked={row.locked} disabled={folderBusy} onClick={()=>void folderAction(()=>folderApi.organize(row.id,row.revision,{locked:!row.locked}))}>{row.locked?<Unlock size={16}/>:<Lock size={16}/>} {row.locked?'Unlock PDF':'Lock PDF'}</button>
+                <button role="menuitemcheckbox" aria-checked={row.locked} disabled={folderBusy||!canManage} onClick={()=>void folderAction(()=>folderApi.organize(row.id,row.revision,{locked:!row.locked}))}>{row.locked?<Unlock size={16}/>:<Lock size={16}/>} {row.locked?'Unlock PDF':'Lock PDF'}</button>
                 {courseId&&programmeId&&subjectFilter&&<label className="upload-menu-move"><MoveRight size={16}/> Move to
                   <select aria-label={`Move ${row.title} to folder`} disabled={folderBusy||row.locked} value={row.folderId||''}
                     onChange={e=>void folderAction(()=>folderApi.organize(row.id,row.revision,{folderId:e.target.value||null}),'PDF moved successfully')}>
@@ -425,20 +441,21 @@ export function UploadsWorkspace({courses,plans,subjects,programmes,onCounts,onO
           }
         }}>
         <div className="upload-folder-dialog-heading"><span className={`upload-folder-icon color-${folderColor}`}><Folder size={25} fill="currentColor" fillOpacity={0.18}/></span>
-          <div><h2 id="folder-editor-title">{folderEditor==='new'?'Create folder':typeof folderEditor==='object'&&'kind' in folderEditor?'Copy folder':'Edit folder'}</h2><p>Organize files within this subject</p></div>
-          <button className="upload-icon-dismiss" type="button" aria-label="Close folder editor" disabled={folderBusy} onClick={()=>setFolderEditor(null)}><X size={18}/></button>
+          <div><h2 id="folder-editor-title">{folderEditor==='new'?'Create folder':typeof folderEditor==='object'&&'kind' in folderEditor?'Copy folder':'Edit folder'}</h2><p>A dedicated space for your learning materials.</p></div>
+          <button className="upload-icon-dismiss" type="button" aria-label="Close folder editor" disabled={folderBusy||!canManage} onClick={()=>setFolderEditor(null)}><X size={18}/></button>
         </div>
-        <label className="upload-folder-input-label">Folder name
+        <div className={`upload-folder-live-preview color-${folderColor}`}><span><Folder size={38} fill="currentColor" fillOpacity={0.18}/></span><div><strong>{folderName.trim()||'Untitled folder'}</strong><small>{liveCourses.find(c=>c.id===courseId)?.name} / {liveProgrammes.find(p=>p.id===programmeId)?.name} / {liveSubjects.find(s=>s.id===subjectFilter)?.name}</small></div></div>
+        <label className="upload-folder-input-label"><span className="upload-folder-label-row"><span>Folder name</span><small>{folderName.length}/100</small></span>
           <input autoFocus maxLength={100} required value={folderName} placeholder="e.g. Revision Notes 2026" onChange={e=>setFolderName(e.target.value)}/>
         </label>
         {!(typeof folderEditor==='object'&&'kind' in folderEditor)&&<div className="upload-folder-colors"><div className="upload-folder-input-label"><Palette size={15}/> Folder colour</div>
           <div className="upload-folder-color-list" role="group" aria-label="Folder colour">
             {folderColors.map(color=><button type="button" className={`upload-folder-color-choice color-${color} ${folderColor===color?'is-selected':''}`}
-              key={color} onClick={()=>setFolderColor(color)} aria-label={`${color} folder`} aria-pressed={folderColor===color}><Folder size={20} fill="currentColor" fillOpacity={0.22}/>{folderColor===color&&<Check size={14}/>}</button>)}
+              key={color} onClick={()=>setFolderColor(color)} aria-label={`${color} folder`} aria-pressed={folderColor===color}><span className="upload-folder-color-swatch"/>{folderColor===color&&<Check size={14}/>}</button>)}
           </div>
         </div>}
         {error&&<p className="upload-feedback upload-error" role="alert"><AlertCircle size={15}/>{error}</p>}
-        <div className="upload-folder-dialog-footer"><button className="a-btn" disabled={folderBusy} type="button" onClick={()=>setFolderEditor(null)}>Cancel</button>
+        <div className="upload-folder-dialog-footer"><button className="a-btn" disabled={folderBusy||!canManage} type="button" onClick={()=>setFolderEditor(null)}>Cancel</button>
           <button className="a-btn primary" disabled={folderBusy||!folderName.trim()} type="submit">{folderBusy?<LoaderCircle className="upload-spinning" size={16}/>:<Check size={16}/>}{folderEditor==='new'?'Create folder':typeof folderEditor==='object'&&'kind' in folderEditor?'Copy folder':'Save changes'}</button></div>
       </form>
     </div>}

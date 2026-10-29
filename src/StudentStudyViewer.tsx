@@ -1,48 +1,24 @@
-import {useCallback,useEffect,useRef,useState,type PointerEvent as ReactPointerEvent,type TouchEvent as ReactTouchEvent} from 'react';
+import {visibleWatermarkedImage,defaultWatermark,type PdfWatermark as Watermark} from './pdf-watermark';
+import {useCallback,useEffect,useMemo,useRef,useState,type PointerEvent as ReactPointerEvent,type TouchEvent as ReactTouchEvent} from 'react';
 import {BookCheck,Check,CheckCircle2,ChevronLeft,ChevronRight,Download,Eraser,FileText,Highlighter,Menu,Minus,MousePointer2,PenLine,Printer,RefreshCw,RotateCcw,ShieldCheck,X,ZoomIn} from 'lucide-react';
 import {authorizedBlobRequest,authorizedPdfRequest} from './auth-client';
-import {documentApi,type StudyStroke,type StudyPage} from './uploads-client';
+import {createPreviewPageLoader} from './preview-page-loader';
+import {documentApi,type StudyStroke,type StudyPage,type PreviewDelivery} from './uploads-client';
 import './student-study-page-nav.css';
 
 const MAX_ZOOM=2.5,MIN_ZOOM=.55;
 type Mode='move'|'pen'|'highlighter'|'eraser';
 type Fit='page'|'width'|'actual';
-type Props={documentId:string;title:string;versionId:string;pageCount:number;allowDownload:boolean;allowPrint:boolean;onClose:()=>void;onRenew:()=>void};
+type Props={initialPage?:number;watermark?:Watermark;documentId:string;title:string;versionId:string;pageCount:number;allowDownload:boolean;allowPrint:boolean;delivery?:PreviewDelivery;onClose:()=>void;onRenew:()=>void};
 const palette=['#174fa4','#c43856','#187e69','#292d3b','#da9238'];
 const clamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
-const previewPath=(id:string,versionId:string,page:number)=>`/v1/documents/${id}/preview/pages/${page}?${new URLSearchParams({versionId})}`;
+
 
 /** Defense in depth only: the authoritative API must deliver student-watermarked
  * assets itself. In-browser compositing cannot stop DevTools or network capture. */
-async function visibleWatermarkedImage(source: Blob, studentEmail: string): Promise<Blob> {
- if(!studentEmail.includes('@'))throw new Error('Verified student email required');
- const image=await createImageBitmap(source);
- try {
-  const canvas=document.createElement('canvas');
-  canvas.width=image.width;canvas.height=image.height;
-  const context=canvas.getContext('2d');
-  if(!context)throw new Error('Watermark composition unavailable');
-  context.drawImage(image,0,0);
-  context.save();
-  context.translate(canvas.width/2,canvas.height/2);
-  context.rotate(-Math.PI/9);
-  context.fillStyle='rgba(35,62,112,0.19)';
-  context.textAlign='center';
-  context.textBaseline='middle';
-  const size=Math.max(16,Math.round(canvas.width/23));
-  context.font=`600 ${size}px sans-serif`;
-  const mark=`DocTutorials · ${studentEmail}`;
-  const stepY=Math.max(size*5,Math.round(canvas.height/3));
-  for(let y=-canvas.height;y<=canvas.height;y+=stepY){
-   context.fillText(mark,0,y,Math.max(100,canvas.width*.96));
-  }
-  context.restore();
-  return await new Promise<Blob>((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Watermark image encoding failed')),'image/jpeg',.88));
- } finally {image.close()}
-}
 
 
-function ReaderThumbnail({id,versionId,page,selected,read,hasInk,onSelect,onRead,disabled,email}:{id:string;versionId:string;page:number;selected:boolean;read:boolean;hasInk:boolean;onSelect:()=>void;onRead:()=>void;disabled:boolean;email:string}){
+function ReaderThumbnail({id,versionId,page,selected,read,hasInk,onSelect,onRead,disabled,email,loadPage,watermark}:{watermark:Watermark;loadPage:(page:number)=>Promise<Blob>;id:string;versionId:string;page:number;selected:boolean;read:boolean;hasInk:boolean;onSelect:()=>void;onRead:()=>void;disabled:boolean;email:string}){
  const element=useRef<HTMLDivElement>(null);
  const [visible,setVisible]=useState(false);
  const [url,setUrl]=useState<string|null>(null);
@@ -56,12 +32,12 @@ function ReaderThumbnail({id,versionId,page,selected,read,hasInk,onSelect,onRead
  useEffect(()=>{
   if(!visible||!email.includes('@')){setUrl(null);return;}
   let active=true,objectUrl:string|null=null;
-  void authorizedBlobRequest(previewPath(id,versionId,page)).then(blob=>visibleWatermarkedImage(blob,email)).then(marked=>{
+  void loadPage(page).then(blob=>visibleWatermarkedImage(blob,email,watermark)).then(marked=>{
    objectUrl=URL.createObjectURL(marked);
    if(active)setUrl(objectUrl);else URL.revokeObjectURL(objectUrl);
   }).catch(()=>{});
   return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl)};
- },[visible,id,versionId,page,email]);
+ },[visible,id,versionId,page,email,loadPage,watermark]);
  useEffect(()=>{if(selected)element.current?.scrollIntoView({block:'nearest'})},[selected]);
  return <div ref={element} className={`study-thumbnail ${selected?'is-active':''}`}>
   <button className="study-thumb-image" onClick={onSelect} onContextMenu={event=>event.preventDefault()} aria-current={selected?'page':undefined} title={`Open page ${page}`}>
@@ -72,11 +48,12 @@ function ReaderThumbnail({id,versionId,page,selected,read,hasInk,onSelect,onRead
  </div>;
 }
 
-export default function StudentStudyViewer({documentId,title,versionId,pageCount,allowDownload,allowPrint,onClose,onRenew}:Props){
- const [page,setPage]=useState(1);
+export default function StudentStudyViewer({documentId,title,versionId,pageCount,allowDownload,allowPrint,delivery,watermark=defaultWatermark,initialPage=1,onClose,onRenew}:Props){
+ const loadPage=useMemo(()=>createPreviewPageLoader(documentId,versionId,delivery,{read:documentApi.read,fallback:authorizedBlobRequest}),[documentId,versionId,delivery]);
+ const [page,setPage]=useState(initialPage);
  const [showRail,setShowRail]=useState(()=>window.innerWidth>700);
  const [mode,setMode]=useState<Mode>('move');
- const [fit,setFit]=useState<Fit>('page');
+ const [fit,setFit]=useState<Fit>('width');
  const [zoom,setZoom]=useState(1);
  const [color,setColor]=useState('#174fa4');
  const [summary,setSummary]=useState<Record<number,{isRead:boolean;hasInk:boolean}>>({});
@@ -146,13 +123,13 @@ export default function StudentStudyViewer({documentId,title,versionId,pageCount
    if(active){setInk(study.strokes);inkRef.current=study.strokes;revisionRef.current=study.revision;setPageReady(true);setSummary(existing=>({...existing,[page]:{isRead:study.isRead,hasInk:study.strokes.length>0}}));}
   }).catch(cause=>{if(active)setNotesError(`Page annotations unavailable: ${cause instanceof Error?cause.message:'Request failed'}`)});
   if(email.includes('@')){
-   void authorizedBlobRequest(previewPath(documentId,versionId,page)).then(blob=>visibleWatermarkedImage(blob,email)).then(marked=>{
+   void loadPage(page).then(blob=>visibleWatermarkedImage(blob,email,watermark)).then(marked=>{
     objectUrl=URL.createObjectURL(marked);
     if(active)setPageUrl(objectUrl);else URL.revokeObjectURL(objectUrl);
    }).catch(cause=>{if(active)setPreviewError(`Protected page image unavailable: ${cause instanceof Error?cause.message:'Request failed'}`)}).finally(()=>{if(active)setPageLoading(false)});
   }else{setPageLoading(false);}
   return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl)};
- },[documentId,versionId,page,email]);
+ },[documentId,versionId,page,email,loadPage,watermark]);
  useEffect(()=>{
   const node=viewportRef.current;if(!node)return;
   const observer=new ResizeObserver(()=>setBounds({width:node.clientWidth,height:node.clientHeight}));
@@ -227,15 +204,15 @@ export default function StudentStudyViewer({documentId,title,versionId,pageCount
   try{svgRef.current?.releasePointerCapture(event.pointerId)}catch{}
   void saveInk([...inkRef.current,value]);
  };
- const swipeStart=(e:ReactTouchEvent)=>{if(mode==='move'&&e.touches.length===1)swipeRef.current={x:e.touches[0]!.clientX,y:e.touches[0]!.clientY}};
+ const swipeStart=(e:ReactTouchEvent)=>{if(mode==='move'&&zoom<=1.05&&e.touches.length===1)swipeRef.current={x:e.touches[0]!.clientX,y:e.touches[0]!.clientY}};
  const swipeEnd=(e:ReactTouchEvent)=>{
-  if(!swipeRef.current||mode!=='move'||busyRef.current||e.changedTouches.length!==1)return;
+  if(zoom>1.05||!swipeRef.current||mode!=='move'||busyRef.current||e.changedTouches.length!==1)return;
   const dx=e.changedTouches[0]!.clientX-swipeRef.current.x,dy=e.changedTouches[0]!.clientY-swipeRef.current.y;
   swipeRef.current=null;
   if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy)*1.5)setPage(n=>clamp(n+(dx<0?1:-1),1,safePageCount));
  };
  const ratio=natural.width/Math.max(1,natural.height);
- const availableWidth=Math.max(220,bounds.width-36),availableHeight=Math.max(240,bounds.height-36);
+ const availableWidth=Math.max(220,bounds.width-(window.innerWidth<=760?16:44)),availableHeight=Math.max(240,bounds.height-36);
  const baseWidth=fit==='page'?Math.min(availableWidth,availableHeight*ratio):fit==='width'?availableWidth:natural.width;
  const paperWidth=Math.round(baseWidth*zoom),paperHeight=Math.round(paperWidth/ratio);
  const go=(delta:number)=>{if(!busyRef.current){setPage(n=>clamp(n+delta,1,safePageCount));setError('')}};
@@ -265,7 +242,7 @@ export default function StudentStudyViewer({documentId,title,versionId,pageCount
   <header className="document-preview-topbar study-topbar"><button className="document-preview-control" onClick={()=>setShowRail(v=>!v)} aria-label={showRail?'Hide page previews':'Show page previews'} aria-expanded={showRail}><Menu size={17}/></button>
    <div className="document-preview-title"><strong title={title}>{title}</strong><small><ShieldCheck size={12}/> Secure student study · {pageCount} pages</small></div>
    <span className="study-progress-header"><BookCheck size={15}/>{readCount}/{pageCount} read</span>
-   <button className="document-preview-control" onClick={onRenew} title="Reauthorize PDF and reload"><RefreshCw size={17}/><span>Refresh</span></button>
+
    <button className="document-preview-control" onClick={onClose} aria-label="Close viewer"><X size={20}/></button>
   </header>
   <div className="study-toolbar" role="toolbar" aria-label="Reading and annotation controls">
@@ -278,16 +255,16 @@ export default function StudentStudyViewer({documentId,title,versionId,pageCount
   </div>
   {visibleError&&<div className="document-preview-action-error" role="alert">{visibleError}<button type="button" onClick={()=>onRenew()}>Retry</button></div>}
   <div className="study-content">
-   {showRail&&<aside className="study-rail" aria-label="Page previews and read progress"><div className="study-rail-heading"><strong>Pages</strong><span>{percent}% read</span></div><div className="study-progress-bar"><span style={{width:`${percent}%`}}/></div><div className="study-thumb-scroll"><div className="study-thumb-range" aria-live="polite">Pages {thumbStart}–{thumbEnd} of {safePageCount}. Jump to any page below.</div>{Array.from({length:thumbEnd-thumbStart+1},(_,i)=>thumbStart+i).map(n=><ReaderThumbnail key={`${versionId}:${n}`} id={documentId} versionId={versionId} page={n} selected={n===page} read={summary[n]?.isRead??false} hasInk={summary[n]?.hasInk??false} disabled={saving} email={email} onSelect={()=>{if(!busyRef.current)setPage(n)}} onRead={()=>void markRead(n)}/>)}</div></aside>}
-   <div className="study-page-column"><div ref={viewportRef} className="study-viewport" onTouchStart={swipeStart} onTouchEnd={swipeEnd}>
+   {showRail&&<aside className="study-rail" aria-label="Page previews and read progress"><div className="study-rail-heading"><strong>Pages</strong><span>{percent}% read</span></div><div className="study-progress-bar"><span style={{width:`${percent}%`}}/></div><div className="study-thumb-scroll"><div className="study-thumb-range" aria-live="polite">Pages {thumbStart}–{thumbEnd} of {safePageCount}. Jump to any page below.</div>{Array.from({length:thumbEnd-thumbStart+1},(_,i)=>thumbStart+i).map(n=><ReaderThumbnail key={`${versionId}:${n}`} id={documentId} versionId={versionId} page={n} selected={n===page} read={summary[n]?.isRead??false} hasInk={summary[n]?.hasInk??false} disabled={saving} email={email} loadPage={loadPage} watermark={watermark} onSelect={()=>{if(!busyRef.current)setPage(n)}} onRead={()=>void markRead(n)}/>)}</div></aside>}
+   <div className="study-page-column"><div ref={viewportRef} className={`study-viewport mode-${mode}`} onTouchStart={swipeStart} onTouchEnd={swipeEnd}>
     {pageLoading?<div className="document-preview-message" role="status"><RefreshCw size={22}/>Loading protected page…</div>:
-     pageUrl&&watermarkReady?<div className="study-paper" style={{width:paperWidth,height:paperHeight}} onContextMenu={e=>e.preventDefault()}>
+     pageUrl&&watermarkReady?<div className="study-paper" style={{width:paperWidth,height:paperHeight}} onDoubleClick={()=>{if(mode==='move')setZoom(z=>z>1?1:1.8)}} onContextMenu={e=>e.preventDefault()}>
       <img src={pageUrl} draggable={false} alt={`Page ${page} of ${title}`} onLoad={e=>{const img=e.currentTarget;if(img.naturalWidth&&img.naturalHeight)setNatural({width:img.naturalWidth,height:img.naturalHeight})}}/>
       <svg ref={svgRef} viewBox="0 0 1000 1000" preserveAspectRatio="none" className={`study-ink-layer mode-${mode}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd} onPointerCancel={pointerEnd} aria-label="Handwritten annotations" role="img">
        {[...ink,...(draft?[draft]:[])].map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>p.join(',')).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width} opacity={stroke.kind==='highlighter'?.42:1} strokeLinecap="round" strokeLinejoin="round"/>) }
       </svg>
 
-     </div>:<div className="document-preview-message">{!watermarkReady?'Verifying student identity for the personalized watermark…':'Protected page image is unavailable. Use Refresh to retry.'}</div>}
+     </div>:<div className="document-preview-message">{!watermarkReady?'Verifying student identity for the personalized watermark…':'Protected page image is unavailable. Try reopening this material.'}</div>}
    </div>
    <button type="button" className="study-edge-nav study-edge-nav-prev" onClick={()=>go(-1)} disabled={page===1||saving} aria-label={`Previous page, ${Math.max(1,page-1)} of ${pageCount}`} title="Previous page"><ChevronLeft size={23}/></button>
    <button type="button" className="study-edge-nav study-edge-nav-next" onClick={()=>go(1)} disabled={page===safePageCount||saving} aria-label={`Next page, ${Math.min(pageCount,page+1)} of ${pageCount}`} title="Next page"><ChevronRight size={23}/></button>

@@ -8,7 +8,8 @@ test('worker checks PDF tool and performs actual antivirus scan before polling',
     calls.push(command);
     if (command === 'clamscan') {
       assert.equal(args[0], '--no-summary');
-      assert.match(args[1] ?? '', /harmless-scan-check\.txt$/);
+      assert.equal(args[1], '--fail-if-cvd-older-than=3');
+      assert.match(args[2] ?? '', /harmless-scan-check\.txt$/);
     }
   });
   assert.deepEqual(calls, ['pdfinfo', 'pdftoppm', 'clamscan']);

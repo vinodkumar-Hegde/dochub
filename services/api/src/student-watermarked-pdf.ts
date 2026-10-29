@@ -51,11 +51,15 @@ export async function* streamStudentWatermarkedPdf(
   pageCount: number,
   email: string,
   loadPage: PrivatePageImage,
+  settings:{position:string;color:string;opacity:number;rotation:number;fontSize:number}={position:'center',color:'#64748b',opacity:0.12,rotation:-20,fontSize:24},
 ): AsyncGenerator<Buffer> {
   if (!Number.isSafeInteger(pageCount) || pageCount < 1 || pageCount > (Number.MAX_SAFE_INTEGER-5)/3) {
     throw new Error('Invalid verified PDF page count');
   }
   const mark = pdfLiteral(safeStudentWatermark(email));
+  if(!/^#[0-9a-fA-F]{6}$/.test(settings.color)||![settings.opacity,settings.rotation,settings.fontSize].every(Number.isFinite)||settings.opacity<0.03||settings.opacity>0.6)throw new Error('Invalid watermark settings');
+  const rgb=[1,3,5].map(i=>decimal(parseInt(settings.color.slice(i,i+2),16)/255)).join(' ');
+  const angle=settings.rotation*Math.PI/180,cos=decimal(Math.cos(angle)),sin=decimal(Math.sin(angle)),negativeSin=decimal(-Math.sin(angle));
   const totalObjects = 4 + 3*pageCount;
   const offsets = new Array<number>(totalObjects+1).fill(0);
   let position = 0;
@@ -73,7 +77,7 @@ export async function* streamStudentWatermarkedPdf(
   const kids = Array.from({length:pageCount},(_,i)=>`${7+i*3} 0 R`).join(' ');
   yield object(2, `<< /Type /Pages /Kids [ ${kids} ] /Count ${pageCount} >>`);
   yield object(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-  yield object(4, '<< /Type /ExtGState /CA 0.38 /ca 0.38 >>');
+  yield object(4, `<< /Type /ExtGState /CA ${decimal(settings.opacity)} /ca ${decimal(settings.opacity)} >>`);
 
   for (let n=1;n<=pageCount;n++) {
     const imageObject = 5+(n-1)*3;
@@ -91,13 +95,14 @@ export async function* streamStudentWatermarkedPdf(
     yield emit(`${imageObject} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace ${colorSpace} /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.byteLength} >>\nstream\n`);
     yield emit(bytes);
     yield emit('\nendstream\nendobj\n');
-    // Light repeated marks across the page plus a visible footer. PDF output
-    // itself contains the email; viewer CSS and browser print settings cannot remove it.
-    const fontSize = Math.max(11,Math.min(27, 390 / Math.max(10,mark.length)*1.8));
-    const watermark = [0.25,0.52,0.78].map(fraction=>
-      `q /GSwm gs BT /Fwm ${decimal(fontSize)} Tf 0.38 0.42 0.54 rg 0.9063 0.4226 -0.4226 0.9063 28 ${decimal(pageHeight*fraction)} Tm (${mark}) Tj ET Q`
-    ).join('\n');
-    const content = `q ${decimal(drawnWidth)} 0 0 ${decimal(drawnHeight)} ${decimal(x)} ${decimal(y)} cm /Im0 Do Q\n${watermark}\nBT /Fwm 9 Tf 0.25 0.32 0.45 rg 1 0 0 1 22 17 Tm (${mark}) Tj ET\n`;
+    const fontSize=Math.min(settings.fontSize,pageWidth*(settings.position==='center'?.8:.45)/Math.max(1,mark.length*.52));
+    const textWidth=fontSize*mark.length*.5;
+    const centerX=pageWidth*(settings.position.endsWith('left')?.24:settings.position.endsWith('right')?.76:.5);
+    const markX=centerX-Math.cos(angle)*textWidth/2;
+    const centerY=pageHeight*(settings.position.startsWith('top')?.87:settings.position.startsWith('bottom')?.13:.5);
+    const markY=centerY-Math.sin(angle)*textWidth/2;
+    const watermark=`q /GSwm gs BT /Fwm ${decimal(fontSize)} Tf ${rgb} rg ${cos} ${sin} ${negativeSin} ${cos} ${decimal(markX)} ${decimal(markY)} Tm (${mark}) Tj ET Q`;
+    const content = `q ${decimal(drawnWidth)} 0 0 ${decimal(drawnHeight)} ${decimal(x)} ${decimal(y)} cm /Im0 Do Q\n${watermark}\n`;
     const contentBytes = Buffer.from(content, 'ascii');
     offsets[contentsObject] = position;
     yield emit(`${contentsObject} 0 obj\n<< /Length ${contentBytes.length} >>\nstream\n`);

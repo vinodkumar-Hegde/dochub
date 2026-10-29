@@ -1,3 +1,4 @@
+import {publishNotification} from './notification-delivery.js';
 import { randomUUID } from 'node:crypto';
 import { CopyObjectCommand, DeleteObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 import type { PrismaClient, Prisma } from '@prisma/client';
@@ -119,6 +120,7 @@ export function registerFolders(app:FastifyInstance,db:PrismaClient,s3:S3Client,
         await approved(tx,doc);
         await tx.document.create({data:{id:documentId,title:doc.title,courseId:doc.courseId,programmeId:doc.programmeId,subjectId:doc.subjectId,folderId,hidden:doc.hidden||Boolean(doc.folder?.hidden),allowDownload:doc.allowDownload,allowPrint:doc.allowPrint,createdById:principal.userId,state:'PUBLISHED',publishedAt:new Date(),
           grants:{create:doc.grants.map(g=>({planId:g.planId}))},versions:{create:{id:versionId,number:1,objectKey:key,objectVersionId:copied.VersionId??null,sizeBytes:old.sizeBytes,contentSha256:old.contentSha256,pageCount:old.pageCount,previewReady:old.previewReady && Boolean(old.pageCount),state:'PUBLISHED'}}}});
+        if(!doc.hidden&&!doc.folder?.hidden)await publishNotification(tx,{kind:'MATERIAL',title:`New material: ${doc.title}`,body:`${doc.title} is now available in My learning.`,createdById:principal.userId,eventKey:`material:${versionId}`,sourceId:documentId,courseIds:[doc.courseId],programmeIds:[doc.programmeId],planIds:doc.grants.map(g=>g.planId),subjectId:doc.subjectId});
         await tx.auditEvent.create({data:{actorId:principal.userId,targetId:documentId,action:'DOCUMENT_COPIED',details:{sourceId:id,folderId}}});
       });
     }catch(error){await removePreviewPages(s3,cfg.S3_BUCKET,previewKeys);await s3.send(new DeleteObjectCommand({Bucket:cfg.S3_BUCKET,Key:key,VersionId:copied.VersionId})).catch(()=>{});throw error;}
@@ -154,6 +156,7 @@ export function registerFolders(app:FastifyInstance,db:PrismaClient,s3:S3Client,
         for(const entry of copied){const old=entry.source.versions[0]!;
           await tx.document.create({data:{id:entry.documentId,title:entry.source.title,courseId:source.courseId,programmeId:source.programmeId,subjectId:source.subjectId,folderId,hidden:entry.source.hidden,allowDownload:entry.source.allowDownload,allowPrint:entry.source.allowPrint,createdById:principal.userId,state:'PUBLISHED',publishedAt:new Date(),
             grants:{create:entry.source.grants.map(g=>({planId:g.planId}))},versions:{create:{id:entry.pdfVersionId,number:1,objectKey:entry.key,objectVersionId:entry.versionId??null,sizeBytes:old.sizeBytes,contentSha256:old.contentSha256,pageCount:old.pageCount,previewReady:old.previewReady && Boolean(old.pageCount),state:'PUBLISHED'}}}});
+          if(!source.hidden&&!entry.source.hidden)await publishNotification(tx,{kind:'MATERIAL',title:`New material: ${entry.source.title}`,body:`${entry.source.title} is now available in My learning.`,createdById:principal.userId,eventKey:`material:${entry.pdfVersionId}`,sourceId:entry.documentId,courseIds:[source.courseId],programmeIds:[source.programmeId],planIds:entry.source.grants.map(g=>g.planId),subjectId:source.subjectId});
         }
         await tx.auditEvent.create({data:{actorId:principal.userId,targetId:folderId,action:'FOLDER_COPIED',details:{sourceId:id,fileCount:copied.length}}});
       },{timeout:20_000});

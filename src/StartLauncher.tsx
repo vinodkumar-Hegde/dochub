@@ -1,9 +1,9 @@
 import {useMemo,useState} from 'react';
-import {BookOpenCheck,FolderOpen,CalendarDays,UsersRound,ChartNoAxesCombined,ShieldCheck,GraduationCap,Search,Pin,Clock3,ChevronRight,Command,Grid2X2,ArrowUpRight} from 'lucide-react';
+import {Bell,BookOpenCheck,FolderOpen,CalendarDays,UsersRound,ChartNoAxesCombined,ShieldCheck,GraduationCap,Search,Pin,Clock3,ChevronRight,Command,Grid2X2,ArrowUpRight} from 'lucide-react';
 import './start.css';
 import {TilePictogram, type TileSymbol} from './TilePictogram';
 
-export type AdminView = 'Analytics' | 'Academic Mapping' | 'Uploads' | 'Sessions' | 'Subscribers' | 'Employees';
+export type AdminView = 'Analytics' | 'Academic Mapping' | 'Uploads' | 'Sessions' | 'Subscribers' | 'Employees' | 'Notifications' | 'Watermark';
 type AppKey = AdminView | 'Student Preview';
 type StartProps = {
   onOpen:(view:AdminView)=>void;
@@ -11,6 +11,7 @@ type StartProps = {
   allowStudentSwitch?:boolean;
   counts:Partial<Record<AdminView,string>>;
   recent:AdminView[];
+  allowedViews?:AdminView[];
   search:string;
   onSearch:(value:string)=>void;
 };
@@ -21,6 +22,8 @@ const apps = [
   {key:'Sessions',symbol:'sessions',title:'Live sessions',description:'Schedules and attendance',icon:CalendarDays,theme:'mint',size:'regular',hint:'Plan sessions'},
   {key:'Subscribers',symbol:'subscribers',title:'Subscribers',description:'People and subscriptions',icon:UsersRound,theme:'purple',size:'wide',hint:'Access and plans'},
   {key:'Analytics',symbol:'analytics',title:'Analytics',description:'Operational insights',icon:ChartNoAxesCombined,theme:'amber',size:'wide',hint:'Explore the numbers'},
+  {key:'Notifications',symbol:'notices',title:'Notification center',description:'Messages, updates and viewers',icon:Bell,theme:'purple',size:'wide',hint:'Keep students informed'},
+  {key:'Watermark',symbol:'employees',title:'Watermark settings',description:'Position, colour and opacity',icon:ShieldCheck,theme:'teal',size:'wide',hint:'Protect your PDFs'},
   {key:'Employees',symbol:'employees',title:'Employee access',description:'Profiles and permissions',icon:ShieldCheck,theme:'teal',size:'wide',hint:'Manage your team'},
   {key:'Student Preview',symbol:'student',title:'Student preview',description:'See the student experience',icon:GraduationCap,theme:'navy',size:'wide',hint:'Switch experience'},
 ] as const;
@@ -34,17 +37,12 @@ function usePinned(){
   return {pinned,toggle};
 }
 
-export function StartLauncher({onOpen,onStudent,allowStudentSwitch=false,counts,recent,search,onSearch}:StartProps){
+export function StartLauncher({onOpen,onStudent,allowStudentSwitch=false,counts,recent,search,onSearch,allowedViews}:StartProps){
   const {pinned,toggle}=usePinned();
-  const filtered=useMemo(()=>apps.filter(app=>(allowStudentSwitch || app.key!=='Student Preview') && [app.title,app.description,app.hint,app.key].join(' ').toLowerCase().includes(search.trim().toLowerCase())),[search,allowStudentSwitch]);
+  const filtered=useMemo(()=>apps.filter(app=>(!allowedViews||app.key==='Student Preview'||allowedViews.includes(app.key))&&(allowStudentSwitch || app.key!=='Student Preview') && [app.title,app.description,app.hint,app.key].join(' ').toLowerCase().includes(search.trim().toLowerCase())),[search,allowStudentSwitch]);
   const ordered=useMemo(()=>[...filtered].sort((a,b)=>Number(pinned.includes(b.key))-Number(pinned.includes(a.key))),[filtered,pinned]);
   const open=(key:AppKey)=>key==='Student Preview'?onStudent():onOpen(key);
   return <section className="start-home" aria-label="Admin application launcher">
-    <div className="start-heading">
-      <div><div className="start-eyebrow"><Grid2X2 size={14}/> DOCTUTORIALS WORKSPACE</div><h1>Workspace</h1><p>All your tools in one place. Select a tile to open a module.</p></div>
-      <div className="start-summary"><span className="start-indicator"/> {apps.length} workspaces available</div>
-    </div>
-    <div className="start-search-wrap"><Search size={20}/><input aria-label="Search workspace apps" placeholder="Find an app — mapping, upload, sessions..." value={search} onChange={e=>onSearch(e.target.value)}/>{search?<button type="button" onClick={()=>onSearch('')}>Clear</button>:<kbd>⌘ K</kbd>}</div>
     <div className="start-section-title"><div><Pin size={16}/><strong>Applications</strong><span>Pinned first</span></div><small>One-click navigation</small></div>
     <div className="start-tile-grid">
       {ordered.map(app=>{const Icon=app.icon;return <div key={app.key} className={`start-tile ${app.size} ${app.theme}`}>
@@ -60,15 +58,4 @@ export function StartLauncher({onOpen,onStudent,allowStudentSwitch=false,counts,
     {!ordered.length&&<div className="start-no-results">No apps found. Try “sessions”, “subscriber”, or “mapping”.</div>}
     {recent.length>0&&<div className="start-footer"><div className="start-section-title"><div><Clock3 size={16}/><strong>Recently opened</strong></div></div><div className="start-recent">{recent.length?recent.map(k=>{const a=apps.find(x=>x.key===k);if(!a)return null;const Icon=a.icon;return <button key={k} onClick={()=>onOpen(k)}><Icon size={16}/>{a.title}<ArrowUpRight size={14}/></button>}):<span>Open a tile to see your recent apps here.</span>}</div></div>}
   </section>;
-}
-
-export function QuickLauncher({onOpen,onStudent,allowStudentSwitch=false,search,onSearch}:Pick<StartProps,'onOpen'|'onStudent'|'allowStudentSwitch'|'search'|'onSearch'>){
-  const matches=apps.filter(a=>(allowStudentSwitch || a.key!=='Student Preview') && [a.title,a.description,a.key].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
-  return <div className="quick-launcher" role="dialog" aria-label="Switch application">
-    <div className="quick-search"><Search size={17}/><input autoFocus aria-label="Find an app" placeholder="Switch to an app..." value={search} onChange={e=>onSearch(e.target.value)}/><kbd>ESC</kbd></div>
-    <div className="quick-label">YOUR APPLICATIONS</div>
-    <div className="quick-grid">{matches.map(a=>{const Icon=a.icon;return <button key={a.key} onClick={()=>a.key==='Student Preview'?onStudent():onOpen(a.key)}><TilePictogram symbol={a.symbol as TileSymbol} size={37}/><strong>{a.title}</strong><ChevronRight size={15}/></button>})}</div>
-    {!matches.length&&<p className="quick-empty">No matching apps</p>}
-    <div className="quick-help"><Command size={13}/> Press ⌘ K to search · Escape to close</div>
-  </div>;
 }

@@ -1,3 +1,4 @@
+import {watermarkSettings} from './workspace-controls.js';
 import { isTaxonomyAvailable } from './academic-lifecycle-policy.js';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -17,6 +18,8 @@ import { resolveProgrammeSelection } from './programme-targets.js';
 import {isStudyPageValid,validateStudyStrokes} from './study-policy.js';
 import {embeddedJpegInfo,safeStudentWatermark,streamStudentWatermarkedPdf} from './student-watermarked-pdf.js';
 import {canExportStudentPdf} from './student-pdf-export-policy.js';
+import {assertPublicationAllowed,publishDocument,publishRequestedVersion,publicationTransaction} from './document-publication.js';
+import {createPreviewDeliverySigner} from './preview-cdn.js';
 import {publishablePreview} from './pdf-preview-job-policy.js';
 
 const uuid = z.string().uuid();
@@ -35,6 +38,8 @@ const adminRoles = ['SUPER_ADMIN', 'CONTENT_MANAGER'] as const;
 export const isEnrolledForDocument = hasExactEnrollment;
 
 export function registerDocuments(app: FastifyInstance, db: PrismaClient, s3: S3Client, cfg: Config, authenticate: (req: import('fastify').FastifyRequest) => Promise<Principal>) {
+
+  const signPreviewDelivery=createPreviewDeliverySigner(cfg);
 
   app.get('/v1/documents/upload-policy', async req => {
     const principal = await authenticate(req); assertRole(principal, [...adminRoles]);
@@ -61,7 +66,7 @@ export function registerDocuments(app: FastifyInstance, db: PrismaClient, s3: S3
         grants: { select: { planId: true } }, folder:{select:{hidden:true,locked:true}},
         versions: { where: { state: { not: 'DELETED' } }, orderBy: { number: 'desc' }, take: 1, select: {
           id: true, number: true, state: true, pageCount: true, failureReason: true,
-          sizeBytes: true, createdAt: true, processingAttempt: true, previewReady: true,
+          sizeBytes: true, createdAt: true, processingAttempt: true, previewReady: true, publishRequestedById:true, publicationFailure:true,
         } },
       },
     });
@@ -74,9 +79,9 @@ export function registerDocuments(app: FastifyInstance, db: PrismaClient, s3: S3
       items: rows.slice(0, input.limit).map(d => ({
         id: d.id, title: d.title, courseId: d.courseId, programmeId: d.programmeId,
         subjectId: d.subjectId, folderId:d.folderId, hidden:d.hidden, locked:d.locked, allowDownload:d.allowDownload, allowPrint:d.allowPrint, revision:d.revision, planIds: d.grants.map(g => g.planId), status: d.state,
-        createdAt: d.createdAt.toISOString(), canManage: d.createdById === principal.userId || principal.roles.includes('SUPER_ADMIN'),
+        createdAt: d.createdAt.toISOString(), canManage: principal.canManageModule!==false && (d.createdById === principal.userId || principal.roles.includes('SUPER_ADMIN')),
         latestVersion: d.versions[0] ? {
-          ...d.versions[0], canPublish: publishablePreview(d.versions[0].state, d.versions[0].previewReady, d.versions[0].pageCount), sizeBytes: d.versions[0].sizeBytes.toString(),
+          ...d.versions[0], publishWhenReady:Boolean(d.versions[0].publishRequestedById), publishRequestedById:undefined, canPublish: publishablePreview(d.versions[0].state, d.versions[0].previewReady, d.versions[0].pageCount), sizeBytes: d.versions[0].sizeBytes.toString(),
           createdAt: d.versions[0].createdAt.toISOString(),
         } : null,
       })),
@@ -393,23 +398,35 @@ export function registerDocuments(app: FastifyInstance, db: PrismaClient, s3: S3
   app.post('/v1/documents/:id/publish', async req => {
     const principal = await authenticate(req); assertRole(principal, [...adminRoles]);
     const { id } = z.object({ id: uuid }).parse(req.params);
-    await db.$transaction(async tx => {
-      const latest = await tx.documentVersion.findFirst({ where: { documentId: id, state: { not: 'DELETED' } }, orderBy: { number: 'desc' } });
-      if (!latest || !publishablePreview(latest.state,latest.previewReady,latest.pageCount)) throw new AuthError(409, 'This PDF is not ready to publish yet. Refresh the upload status and publish when it shows “Ready to publish”. If preparation fails, use Retry.');
-      const document = await tx.document.findUniqueOrThrow({ where: { id }, include: { grants: true,folder:true } });
-      const approved = await tx.academicProgramme.findUnique({ where: { id: document.programmeId }, include: { plans: true, subjects: true,course:true } });
-      if(!isTaxonomyAvailable(approved)||!isTaxonomyAvailable(approved?.course)||!isTaxonomyAvailable(await tx.academicSubject.findUnique({where:{id:document.subjectId}})))throw new AuthError(423,'Academic content unavailable');
-      if (!validUploadMapping(approved, { courseId: document.courseId, programmeId: document.programmeId, subjectId: document.subjectId, planIds: document.grants.map(g => g.planId) })) throw new AuthError(409, 'Programme mapping is no longer approved');
-      if (document.state === 'DELETED') throw new AuthError(404, 'Document not found');
-      if (document.locked || document.folder?.locked) throw new AuthError(409, 'Unlock the file and folder before publishing');
-      if (document.createdById !== principal.userId && !principal.roles.includes('SUPER_ADMIN')) throw new AuthError(403, 'Not authorized to publish this document');
-      await tx.document.update({ where: { id }, data: { state: 'PUBLISHED', publishedAt: new Date() } });
-      await tx.documentVersion.update({ where: { id: latest.id }, data: { state: 'PUBLISHED' } });
-      await tx.auditEvent.create({ data: { actorId: principal.userId, action: 'PUBLISHED', targetId: id, details: { versionId: latest.id } } });
-    });
+    await publicationTransaction(db,tx=>publishDocument(tx,id,principal));
     return { status: 'PUBLISHED' };
   });
 
+
+  app.put('/v1/documents/:id/publication-intent',async req=>{
+    const principal=await authenticate(req);assertRole(principal,[...adminRoles]);
+    const {id}=z.object({id:uuid}).parse(req.params);
+    const input=z.object({versionId:uuid,enabled:z.boolean()}).strict().parse(req.body);
+    await publicationTransaction(db,async tx=>{
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 0))::text`;
+      const document=await tx.document.findUnique({where:{id}});
+      if(!document||document.state==='DELETED')throw new AuthError(404,'Document not found');
+      if(document.createdById!==principal.userId&&!principal.roles.includes('SUPER_ADMIN'))throw new AuthError(403,'Not authorized');
+      const latest=await tx.documentVersion.findFirst({where:{documentId:id,state:{not:'DELETED'}},orderBy:{number:'desc'}});
+      if(!latest||latest.id!==input.versionId)throw new AuthError(409,'The PDF version changed. Refresh and try again.');
+      if(input.enabled){
+        if(latest.state==='READY'&&!latest.previewReady&&latest.processingAttempt>=5)throw new AuthError(409,'Page preparation needs administrator attention before automatic publication can be scheduled');
+        await assertPublicationAllowed(tx,id,principal);
+        if(!['UPLOADING','QUEUED','PROCESSING','READY'].includes(latest.state))throw new AuthError(409,'This version cannot be scheduled for publication');
+      }
+      if((input.enabled?latest.publishRequestedById===principal.userId:!latest.publishRequestedById)&&!latest.publicationFailure)return;
+      if(input.enabled&&latest.state==='READY'&&!latest.previewReady)await tx.outboxEvent.create({data:{topic:'PDF_PROCESS',aggregateId:latest.id,payload:{versionId:latest.id}}});
+      await tx.documentVersion.update({where:{id:latest.id},data:{publishRequestedById:input.enabled?principal.userId:null,publicationFailure:null,publicationRequestRevision:{increment:1}}});
+      await tx.auditEvent.create({data:{actorId:principal.userId,targetId:id,action:input.enabled?'AUTO_PUBLICATION_REQUESTED':'AUTO_PUBLICATION_CANCELLED',details:{versionId:latest.id}}});
+    });
+    if(input.enabled)await publishRequestedVersion(db,input.versionId).catch(error=>req.log.error({err:error},'Deferred publication will retry in worker'));
+    return {status:input.enabled?'SCHEDULED':'CANCELLED'};
+  });
 
   /** Document authorization is always evaluated at request time. Student
    * previews return NO original-PDF URL, even when print/download is allowed.
@@ -554,14 +571,18 @@ export function registerDocuments(app: FastifyInstance, db: PrismaClient, s3: S3
     return {page,revision:result.revision,isRead:result.isRead};
   });
 
-  app.get('/v1/documents/:id/read', async req => {
+  app.get('/v1/documents/:id/read', async (req,reply) => {
+    reply.header('Cache-Control','private, no-store');
     const { principal, doc, selected, isAdmin, id } = await authorizeRead(req);
     if (studentReaderMode(isAdmin) === 'pages') {
       if (!selected.previewReady || !selected.pageCount) {
         throw new AuthError(409, 'Secure PDF previews are being prepared. Retry shortly or contact support if processing does not finish.');
       }
+      await db.materialView.upsert({where:{userId_documentId:{userId:principal.userId,documentId:id}},create:{userId:principal.userId,documentId:id},update:{lastOpenedAt:new Date(),opens:{increment:1}}});
       await auditRead(principal.userId, id, selected.id, 'DOCUMENT_PREVIEW_AUTHORIZED');
-      return { mode: 'pages' as const, versionId: selected.id, pageCount: selected.pageCount,
+      req.server.log.debug({documentId:id},'Student page delivery authorized');
+      return { watermark:await watermarkSettings(db), mode: 'pages' as const, versionId: selected.id, pageCount: selected.pageCount,
+        ...(signPreviewDelivery?{delivery:signPreviewDelivery(selected.id)}:{}),
         ...effectiveDocumentPermissions(doc) };
     }
     const expiresInSeconds = 120;
@@ -572,7 +593,7 @@ export function registerDocuments(app: FastifyInstance, db: PrismaClient, s3: S3
       ResponseCacheControl: 'private, no-store',
     }), { expiresIn: expiresInSeconds });
     await auditRead(principal.userId, id, selected.id, 'DOCUMENT_READ_AUTHORIZED');
-    return { mode: 'pdf' as const, url, expiresInSeconds, versionId: selected.id, pageCount: selected.pageCount };
+    return { pagePreviewReady:selected.previewReady, mode: 'pdf' as const, url, expiresInSeconds, versionId: selected.id, pageCount: selected.pageCount };
   });
 
   app.get('/v1/documents/:id/preview/pages/:page', async (req, reply) => {
@@ -645,7 +666,7 @@ export function registerDocuments(app: FastifyInstance, db: PrismaClient, s3: S3
     catch {throw new AuthError(503,'Protected PDF pages are temporarily unavailable');}
     const load=(page:number)=>page===1?Promise.resolve(first):fetchPage(page);
     await db.auditEvent.create({data:{actorId:principal.userId,targetId:id,action:'STUDENT_WATERMARKED_PDF_EXPORT',details:{versionId:selected.id,purpose,pageCount:selected.pageCount}}});
-    const stream=Readable.from(streamStudentWatermarkedPdf(selected.pageCount,user.email,load));
+    const stream=Readable.from(streamStudentWatermarkedPdf(selected.pageCount,user.email,load,await watermarkSettings(db)));
     reply.header('Cache-Control','private, no-store, max-age=0');
     reply.header('Pragma','no-cache');
     reply.header('X-Content-Type-Options','nosniff');

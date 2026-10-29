@@ -5,6 +5,14 @@ const image=Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQ
 const generate=async(n:number,email='test+copy@example.com')=>{const chunks:Buffer[]=[];for await(const chunk of streamStudentWatermarkedPdf(n,email,async()=>image))chunks.push(chunk);return Buffer.concat(chunks)};
 test('JPEG dimensions and format are validated',()=>{assert.deepEqual(embeddedJpegInfo(image),{width:5,height:8,colorSpace:'/DeviceRGB'});assert.throws(()=>embeddedJpegInfo(Buffer.from('not jpeg')))});
 test('watermark requires valid printable email',()=>{assert.equal(safeStudentWatermark('student@example.com'),'DocTutorials - student@example.com');assert.throws(()=>safeStudentWatermark('student\n@evil.com'));assert.throws(()=>safeStudentWatermark('not-an-email'))});
-test('PDF embeds an identifiable student watermark on every page',async()=>{const out=(await generate(3)).toString('latin1');assert.match(out,/^%PDF-1.4/);assert.equal((out.match(/DocTutorials - test\+copy@example.com/g)||[]).length,12);assert.match(out,/\/Count 3/);assert.match(out,/startxref/);assert.match(out,/%%EOF/)});
+test('PDF embeds an identifiable student watermark on every page',async()=>{const out=(await generate(3)).toString('latin1');assert.match(out,/^%PDF-1.4/);assert.equal((out.match(/DocTutorials - test\+copy@example.com/g)||[]).length,3);assert.match(out,/\/Count 3/);assert.match(out,/startxref/);assert.match(out,/%%EOF/)});
 test('one page and 215 pages produce a complete PDF without skipping pages',async()=>{for(const n of [1,215]){const out=(await generate(n)).toString('latin1');assert.match(out,new RegExp(`/Count ${n}[^0-9]`));assert.equal((out.match(/\/Subtype \/Image/g)||[]).length,n);assert.match(out,/%%EOF/);}});
 test('rejects impossible counts, never starts exporting unvalidated pages',async()=>{await assert.rejects(async()=>{for await(const _ of streamStudentWatermarkedPdf(0,'student@example.com',async()=>image)){void _;}});});
+
+test('custom watermark settings apply exactly once per exported page',async()=>{
+ const chunks:Buffer[]=[];
+ for await(const chunk of streamStudentWatermarkedPdf(2,'student@example.com',async()=>image,{position:'bottom-right',color:'#336699',opacity:.2,rotation:0,fontSize:20}))chunks.push(chunk);
+ const pdf=Buffer.concat(chunks).toString('latin1');
+ assert.equal((pdf.match(/DocTutorials - student@example.com/g)||[]).length,2);
+ assert.match(pdf,/\/CA 0.2 \/ca 0.2/);assert.match(pdf,/0.2 0.4 0.6 rg/);assert.match(pdf,/1 0 0 1 [0-9.]+ 102.96 Tm/);
+});

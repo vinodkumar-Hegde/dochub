@@ -18,13 +18,16 @@ export type DocumentRow = {
     state: DocumentStatus;
     pageCount: number | null;
     canPublish: boolean;
+    publishWhenReady: boolean;
+    publicationFailure: string|null;
     failureReason: string | null;
     sizeBytes: string;
     processingAttempt: number;
     createdAt: string;
   };
 };
-export type DocumentReadResult = {mode:'pdf';url:string;versionId:string;pageCount:number|null;expiresInSeconds:number} | {mode:'pages';versionId:string;pageCount:number;allowDownload:boolean;allowPrint:boolean};
+export type PreviewDelivery = {baseUrl:string;query:string;expiresAt:number};
+export type DocumentReadResult = {mode:'pdf';pagePreviewReady?:boolean;url:string;versionId:string;pageCount:number|null;expiresInSeconds:number} | {mode:'pages';watermark?:{position:string;color:string;opacity:number;rotation:number;fontSize:number};versionId:string;pageCount:number;allowDownload:boolean;allowPrint:boolean;delivery?:PreviewDelivery};
 export type StudyStroke = {id:string;kind:'pen'|'highlighter';color:string;width:number;points:Array<[number,number]>};
 export type StudySummary = {email:string;pages:Array<{page:number;isRead:boolean;hasInk:boolean}>};
 export type StudyPage = {page:number;isRead:boolean;revision:number;strokes:StudyStroke[]};
@@ -58,6 +61,7 @@ export const documentApi = {
     for (const [key, value] of Object.entries(args)) if (value) q.set(key, value);
     return api<DocumentPage>(`/v1/documents?${q}`);
   },
+  publicationIntent:(id:string,versionId:string,enabled:boolean)=>api<{status:string}>(`/v1/documents/${id}/publication-intent`,'PUT',{versionId,enabled}),
   read: (id: string) => api<DocumentReadResult>(`/v1/documents/${id}/read`),
   studySummary:(id:string,versionId:string)=>api<StudySummary>(`/v1/documents/${id}/study?${new URLSearchParams({versionId})}`),
   studyPage:(id:string,versionId:string,page:number)=>api<StudyPage>(`/v1/documents/${id}/study/pages/${page}?${new URLSearchParams({versionId})}`),

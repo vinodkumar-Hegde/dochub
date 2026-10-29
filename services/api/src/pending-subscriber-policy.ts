@@ -1,5 +1,4 @@
-/** A pending identity cannot equal a Cognito sub (UUID) accepted by the JWT validator.
- * It is only an internal reference for subscriptions, never a bearer credential. */
+/** Internal identity keys are not sign-in credentials. */
 export function pendingIdentitySub(id: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
     throw new Error('Pending identity requires a UUID');

@@ -1,9 +1,10 @@
+import {publishNotification} from './notification-delivery.js';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { assertRole, AuthError, type Principal } from './auth.js';
-import { canStudentSeeSession, sessionDateFilter, validSessionMapping, youtubeLinkValid } from './sessions-policy.js';
+import { pastSessionIsReadOnly,canStudentSeeSession, sessionDateFilter, validSessionMapping, youtubeLinkValid } from './sessions-policy.js';
 import { resolveProgrammeSelection } from './programme-targets.js';
 import { isTaxonomyAvailable } from './academic-lifecycle-policy.js';
 import { attendanceMutationDecision, canSubmitStudentResponse } from './student-attendance-policy.js';
@@ -86,6 +87,7 @@ export function registerSessions(app:FastifyInstance,db:PrismaClient,authenticat
     return db.$transaction(async tx=>{
       const old=await tx.liveSession.findUnique({where:{id}});
       if(!old)throw new AuthError(404,'Session not found');
+      if(pastSessionIsReadOnly(principal.roles,old.endAt,old.status)||pastSessionIsReadOnly(principal.roles,new Date(input.endAt),input.status))throw new AuthError(403,'Only an administrator can change a session that has ended.');
       if(old.createdById!==principal.userId&&!principal.roles.includes('SUPER_ADMIN'))throw new AuthError(403,'Another manager owns this session');
       const targets=await validateSession(tx,input);
       const {revision,planIds:_planIds,mappingRevision:_mappingRevision,courseId:_courseId,startAt,endAt,...rest}=input;
@@ -103,6 +105,7 @@ export function registerSessions(app:FastifyInstance,db:PrismaClient,authenticat
     return db.$transaction(async tx=>{
       const s=await tx.liveSession.findUnique({where:{id},include:{plans:true}});
       if(!s)throw new AuthError(404,'Session not found');
+      if(pastSessionIsReadOnly(principal.roles,s.endAt,s.status))throw new AuthError(403,'Only an administrator can publish or unpublish a session that has ended.');
       if(s.createdById!==principal.userId&&!principal.roles.includes('SUPER_ADMIN'))throw new AuthError(403,'Another manager owns this session');
       if(input.publish){
         if(s.status==='DRAFT')throw new AuthError(409,'Select a scheduled, postponed, cancelled or completed status before publishing');
@@ -111,6 +114,7 @@ export function registerSessions(app:FastifyInstance,db:PrismaClient,authenticat
       }
       const result=await tx.liveSession.updateMany({where:{id,revision:input.revision},data:{publishedAt:input.publish?new Date():null,updatedById:principal.userId,revision:{increment:1}}});
       if(!result.count)throw new AuthError(409,'Session changed elsewhere; reload');
+      if(input.publish&&!s.publishedAt)await publishNotification(tx,{kind:'SESSION',title:`Session published: ${s.topic}`,body:`${s.topic}\nFaculty: ${s.facultyName}\nStarts: ${s.startAt.toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})} IST\nStatus: ${s.status}\nOpen My Schedule for details.`,createdById:principal.userId,eventKey:`session:${s.id}:${s.revision}`,sourceId:s.id,courseIds:[s.courseId],programmeIds:[s.programmeId],planIds:s.plans.map(p=>p.planId),subjectId:s.subjectId});
       await tx.auditEvent.create({data:{actorId:principal.userId,targetId:id,action:input.publish?'SESSION_PUBLISHED':'SESSION_UNPUBLISHED',details:{status:s.status,plans:s.plans.map(p=>p.planId)}}});
       return {status:input.publish?'published':'unpublished'};
     });
@@ -144,7 +148,7 @@ export function registerSessions(app:FastifyInstance,db:PrismaClient,authenticat
         const decision=attendanceMutationDecision(previous?.response??null,input.response);
         if(decision==='same')return {record:previous!,created:false};
         if(decision==='conflict')throw new AuthError(409,'Attendance response is already submitted and cannot be changed');
-        if(!canSubmitStudentResponse(session.status))throw new AuthError(409,'Attendance response is unavailable for this session status');
+        if(!canSubmitStudentResponse(session.status,session.endAt,now))throw new AuthError(409,'This session has ended or is unavailable. Responses are read-only.');
         const record=await tx.studentSessionResponse.create({data:{userId:principal.userId,sessionId:id,response:input.response}});
         await tx.auditEvent.create({data:{actorId:principal.userId,targetId:id,action:'STUDENT_SESSION_RESPONSE_SUBMITTED',details:{response:record.response}}});
         return {record,created:true};

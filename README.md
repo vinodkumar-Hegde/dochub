@@ -1,45 +1,26 @@
-# DocHub — Programme-first Student Tiles V20
+# DocHub
 
-React 19 / TypeScript / Vite interactive frontend prototype. This version refines the student learning flow around a simple programme → subjects → materials hierarchy.
+React/TypeScript learning workspace with a Fastify API, PostgreSQL/Prisma, email OTP authentication, private S3 storage and an SQS PDF worker.
 
-## Start on macOS
+Start with [the DevOps handoff](docs/operations/DEVOPS-HANDOFF.md) for Docker commands, environment variables, AWS prerequisites, migrations, admin creation, endpoints, deployment and rollback. [Review results](docs/verification/CODE-REVIEW.md) distinguish automated checks from deployment checks.
 
-Extract `DocHub-Tiles-V20.zip` into your working folder, then run:
+## Local development
 
-```bash
-cd DocHub-Tiles-V20
-npm install
-npm run dev
+Requires Node.js 22, PostgreSQL 16 and separately configured AWS resources.
+
+```sh
+npm ci
+npm ci --prefix services/api
+cp .env.example .env.local
+cp services/api/.env.example services/api/.env
+# Edit both environment files before proceeding.
+cd services/api
+npm run db:generate
+npm run db:migrate
+node --env-file=.env --import tsx src/bootstrap-admin.ts
+node --env-file=.env --import tsx src/server.ts
 ```
 
-Open **http://localhost:5190/**. Cognito requires this exact local callback URL; using `127.0.0.1` causes `redirect_mismatch`.
+In another terminal, run `npm run dev` from the repository root. Run the PDF worker separately with `node --env-file=.env --import tsx src/worker.ts` from `services/api`; it needs Poppler and current ClamAV signatures. Docker provides those system dependencies. Application login is email + OTP for all roles; no password, default admin or legacy Cognito setup is required.
 
-## Student navigation in V20
-
-1. Student home shows navigation tiles and a **Browse by programme** grid. No subject cards are mixed across programmes.
-2. Select a programme to open its subject tiles only.
-3. Select a subject to open the published study materials as 2D document tiles.
-4. Use breadcrumbs or the back control to move up one level. No permanent left-side tree is used.
-5. Document tiles retain PDF opening, reading progress, and pin/unpin interactions.
-
-## Visual system
-
-- Light-filled tiles, consistent 1px borders and compact spacing.
-- Medical 2D pictograms with subject-specific accent colours.
-- Hover lift, soft shadow, visible keyboard focus and reduced-motion support.
-- Responsive tile grids for desktop, tablet and mobile.
-
-## Key files
-
-- `src/StudentLauncher.tsx` — student home and programme catalogue.
-- `src/StudentLearning.tsx` — programme → subject → material navigation.
-- `src/StudentPortal.tsx` — student top navigation, app switcher and header.
-- `src/student-tiles.css` — tile styling, responsive layout and hover motion.
-- `src/TilePictogram.tsx` — reusable 2D icon pairs.
-- `src/App.tsx` and `src/data.ts` — existing prototype state, entitlements, PDF reader, sessions and sample data.
-
-## Verification and limitations
-
-- TSX syntax/transpilation check passed.
-- Full `npm run build` and visual browser QA remain unverified because `npm install` timed out while downloading dependencies in this environment. Run `npm install && npm run build` locally.
-- This remains a frontend prototype using local mock data. Backend persistence, real document storage/processing, and server-side authorization are not implemented by this UI change.
+Do not commit real environment files, credentials, database backups, Terraform state or signing keys. `VITE_*` values are public browser configuration.

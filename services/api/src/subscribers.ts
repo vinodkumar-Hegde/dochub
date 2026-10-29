@@ -1,3 +1,4 @@
+import {isSubscriberPhone} from './subscriber-phone.js';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
@@ -9,6 +10,7 @@ import type { Config } from './config.js';
 import { normalizeSubscriberEmail } from './subscriber-email.js';
 import { subscriberState, validSubscriptionWindow } from './academic-lifecycle-policy.js';
 import { resolveImportWindow, validImportDate } from './subscriber-import-window.js';
+import {subscriberImportIssues,type SubscriberImportIssue} from './subscriber-import-policy.js';
 import { pendingIdentitySub, existingSubscriberConflict } from './pending-subscriber-policy.js';
 
 const uuid = z.string().uuid();
@@ -25,15 +27,61 @@ const bulkStudentInput = z.object({
   planIds:z.array(uuid).min(1).max(50),
   activeFrom:z.string().datetime({offset:true}).optional(),
   validUntil:z.string().datetime({offset:true}).nullable(),
-  replaceExisting:z.boolean().default(false),
-  rows:z.array(z.object({name:z.string().trim().min(2).max(120),email:z.string().trim().email().max(254),phone:z.string().trim().regex(/^\+?[0-9 ()-]{7,20}$/).optional(),course:z.string().trim().max(120).optional(),activationDate:z.string().refine(validImportDate,'Activation Date must be YYYY-MM-DD').optional(),expiryDate:z.string().refine(validImportDate,'Expiry Date must be YYYY-MM-DD').optional()}).strict()).min(1).max(200),
+  replaceExisting:z.literal(false).optional(),
+  rows:z.array(z.object({name:z.string().trim().min(2).max(120),email:z.string().trim().email().max(254),phone:z.string().trim().transform(value=>value||undefined).pipe(z.string().refine(isSubscriberPhone,'Enter a valid national or international phone number').optional()).optional(),course:z.string().trim().max(120).optional(),activationDate:z.string().refine(validImportDate,'Activation Date must be YYYY-MM-DD').optional(),expiryDate:z.string().refine(validImportDate,'Expiry Date must be YYYY-MM-DD').optional()}).strict()).min(1).max(200),
 }).strict();
+type BulkStudentInput=z.infer<typeof bulkStudentInput>;
+function parseImportInput(body:unknown):BulkStudentInput{
+  if(body&&typeof body==='object'&&'replaceExisting' in body&&body.replaceExisting===true)throw new AuthError(422,'Bulk upload creates new students only. Edit existing student access from Subscribers.');
+  const parsed=bulkStudentInput.safeParse(body);
+  if(!parsed.success){
+    const messages=parsed.error.issues.slice(0,8).map(issue=>{
+      const [field,index,column]=issue.path;
+      return field==='rows'&&typeof index==='number'?`CSV row ${index+2}${column?` (${String(column)})`:''}: ${issue.message}`:`${issue.path.join('.')||'Import'}: ${issue.message}`;
+    });
+    throw new AuthError(422,messages.join(' · '));
+  }
+  return parsed.data;
+}
+async function validateImport(tx:Prisma.TransactionClient,input:BulkStudentInput):Promise<{issues:SubscriberImportIssue[];grants:Array<GrantSelection & {activeFrom?:string}>}>{
+  const grants=input.planIds.flatMap(planId=>input.subjectIds.map(subjectId=>({courseId:input.courseId,programmeId:input.programmeId,subjectId,planId,activeFrom:input.activeFrom,validUntil:input.validUntil})));
+  if(grants.length*input.rows.length>4000)throw new AuthError(413,`Selected plans and subjects allow at most ${Math.floor(4000/grants.length)} students per file. Reduce the file or select fewer mappings.`);
+  await ensureApprovedGrants(tx,grants);
+  const course=await tx.academicCourse.findUnique({where:{id:input.courseId},select:{name:true,code:true}});
+  if(!course)throw new AuthError(422,'Selected course no longer exists');
+  const emails=[...new Set(input.rows.map(row=>normalizeSubscriberEmail(row.email)))];
+  // Match the same normalized expression as the database unique index, including legacy whitespace.
+  const existing=await tx.$queryRaw<Array<{email:string}>>`SELECT email FROM "User" WHERE lower(btrim(email)) IN (${Prisma.join(emails)})`;
+  return {issues:subscriberImportIssues(input.rows,existing.map(user=>user.email),course,input.activeFrom,input.validUntil),grants};
+}
+
 const createStudentInput = z.object({
   email:z.string().trim().email().max(254),
-  phone:z.string().trim().regex(/^\+?[0-9 ()-]{7,20}$/).optional(),
+  phone:z.string().trim().refine(isSubscriberPhone,'Enter a valid national or international phone number').optional(),
   displayName:z.string().trim().min(2).max(120),
   grants:z.array(grant).min(1).max(500),
 }).strict();
+const profileInput=z.object({
+  revision:z.number().int().nonnegative(),
+  displayName:z.string().trim().min(2).max(120).optional(),
+  email:z.string().trim().email().max(254).transform(normalizeSubscriberEmail).optional(),
+  phone:z.string().trim().refine(value=>!value||isSubscriberPhone(value),'Enter a valid phone number').optional(),
+  featuresLocked:z.boolean().optional(),
+}).strict().refine(value=>Object.keys(value).some(key=>key!=='revision'),'Select a profile change');
+const revisionInput=z.object({revision:z.number().int().nonnegative()}).strict();
+async function manageableStudent(tx:Prisma.TransactionClient,id:string,actorId:string){
+  const user=await tx.user.findUnique({where:{id},include:{roles:true}});
+  if(!user||!user.roles.some(role=>role.role==='STUDENT'))throw new AuthError(404,'Subscriber not found');
+  if(id===actorId||user.roles.some(role=>role.role!=='STUDENT'))throw new AuthError(403,'Manage employee accounts separately');
+  return user;
+}
+function profileConflict(error:unknown):never {
+  if(error&&typeof error==='object'&&'code' in error){
+    if(error.code==='P2002')throw new AuthError(409,'This email already belongs to another user.');
+    if(error.code==='P2034')throw new AuthError(409,'Subscriber changed elsewhere. Reload before saving.');
+  }
+  throw error;
+}
 const batchInput = z.object({
   userIds:z.array(uuid).min(1).max(100), grants:z.array(grant).min(1).max(200),
 }).strict();
@@ -46,7 +94,7 @@ const serialized = (user: {
     courseId:string;programmeId:string;subjectId:string;planId:string;activeFrom:Date;validUntil:Date|null;
   }>;
 }) => ({
-  id:user.id, email:user.email, phone:(user as typeof user & {phone?:string|null}).phone??null, displayName:user.displayName, enabled:user.enabled,
+  id:user.id, email:user.email, phone:(user as typeof user & {phone?:string|null}).phone??null, displayName:user.displayName, enabled:user.enabled, featuresLocked:!user.enabled,
   revision:user.revision,
   status:subscriberState(user.enabled,user.enrollments,new Date()),
   grants:user.enrollments.map(g=>({...g,activeFrom:g.activeFrom.toISOString(),validUntil:g.validUntil?.toISOString()??null})),
@@ -120,10 +168,56 @@ export function registerSubscribers(
     return {total,active,byCourse:Object.fromEntries(courseRows.map(r=>[r.courseId,Number(r.subscribers)]))};
   });
 
-  /** Stores a student's subscriptions without creating a Cognito login.
-   * Pending identity subjects cannot match Cognito-generated UUID sub claims
-   * accepted from properly verified access tokens. Future activation must verify the student's
-   * identity before atomically binding that sub to this same user record. */
+  app.patch('/v1/admin/subscribers/:id',async req=>{
+    const principal=await authenticate(req);assertRole(principal,['SUPER_ADMIN']);
+    const {id}=userParam.parse(req.params),input=profileInput.parse(req.body);
+    try{return await db.$transaction(async tx=>{
+      const user=await manageableStudent(tx,id,principal.userId);
+      const emailChanged=input.email!==undefined&&input.email!==normalizeSubscriberEmail(user.email??'');
+      if(input.email!==undefined){
+        const matches=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "User" WHERE lower(btrim(email)) = ${input.email} AND id <> ${id}::uuid LIMIT 1`;
+        if(matches.length)throw new AuthError(409,'This email already belongs to another user.');
+      }
+      const updated=await tx.user.updateMany({where:{id,revision:input.revision},data:{
+        ...(input.displayName!==undefined?{displayName:input.displayName}:{}),
+        ...(input.email!==undefined?{email:input.email}:{}),
+        ...(input.phone!==undefined?{phone:input.phone||null}:{}),
+        ...(input.featuresLocked!==undefined?{enabled:!input.featuresLocked}:{}),revision:{increment:1},
+      }});
+      if(updated.count!==1)throw new AuthError(409,'Subscriber changed elsewhere. Reload before saving.');
+      if(emailChanged){
+        await tx.appSession.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}});
+        await tx.loginChallenge.deleteMany({where:{userId:id}});
+        await tx.studentSession.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}});
+        await tx.studentAuthToken.deleteMany({where:{userId:id}});
+      }
+      await tx.auditEvent.create({data:{actorId:principal.userId,targetId:id,action:'SUBSCRIBER_PROFILE_UPDATED',details:{fields:Object.keys(input).filter(key=>key!=='revision'),emailChanged,featuresLocked:input.featuresLocked??!user.enabled}}});
+      return {status:'saved',revision:input.revision+1};
+    },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});}catch(error){profileConflict(error);}
+  });
+
+  app.delete('/v1/admin/subscribers/:id',async req=>{
+    const principal=await authenticate(req);assertRole(principal,['SUPER_ADMIN']);
+    const {id}=userParam.parse(req.params),input=revisionInput.parse(req.body);
+    try{await db.$transaction(async tx=>{
+      await manageableStudent(tx,id,principal.userId);
+      const claimed=await tx.user.updateMany({where:{id,revision:input.revision},data:{revision:{increment:1}}});
+      if(claimed.count!==1)throw new AuthError(409,'Subscriber changed elsewhere. Reload before deleting.');
+      await tx.loginChallenge.deleteMany({where:{userId:id}});
+      await tx.studentSession.deleteMany({where:{userId:id}});
+      await tx.studentAuthToken.deleteMany({where:{userId:id}});
+      await tx.studentCredential.deleteMany({where:{userId:id}});
+      await tx.documentStudyPage.deleteMany({where:{userId:id}});
+      await tx.studentSessionResponse.deleteMany({where:{userId:id}});
+      await tx.enrollment.deleteMany({where:{userId:id}});
+      await tx.userProfile.deleteMany({where:{userId:id}});
+      await tx.user.delete({where:{id}});
+      await tx.auditEvent.create({data:{actorId:principal.userId,targetId:id,action:'SUBSCRIBER_DELETED',details:{deleted:true}}});
+    },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});}catch(error){profileConflict(error);}
+    return {status:'deleted'};
+  });
+
+  /** Register student details and subscriptions for email OTP sign-in. */
   app.post('/v1/admin/subscribers', async (req,reply)=>{
     const principal=await authenticate(req); assertRole(principal,['SUPER_ADMIN']);
     const input=createStudentInput.parse(req.body);
@@ -133,92 +227,59 @@ export function registerSubscribers(
         await ensureApprovedGrants(tx,input.grants);
         // Serializable transaction protects the email lookup + creation from
         // concurrent Add Student requests, even before a unique email index exists.
-        const matches=await tx.user.findMany({
-          where:{email:{equals:email,mode:'insensitive'}},
-          include:{roles:true},take:2,
-        });
+        const matchingIds=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "User" WHERE lower(btrim(email)) = ${email} LIMIT 2`;
+        const matches=await tx.user.findMany({where:{id:{in:matchingIds.map(user=>user.id)}},include:{roles:true}});
         const conflict=existingSubscriberConflict(matches);
         if(conflict) throw new AuthError(409,conflict);
         const existing=matches[0];
-        const nameChanged=Boolean(existing && existing.displayName!==input.displayName);
-        const user=existing
-          ? await tx.user.update({where:{id:existing.id},data:{email,displayName:input.displayName,phone:input.phone??null}})
-          : await tx.user.create({data:{identitySub:pendingIdentitySub(randomUUID()),email,displayName:input.displayName,phone:input.phone??null}});
-        if(!existing) await tx.userProfile.create({data:{userId:user.id,role:'STUDENT'}});
+        if(existing)throw new AuthError(409,'This email already exists. Edit the student from Subscribers instead.');
+        const user=await tx.user.create({data:{identitySub:pendingIdentitySub(randomUUID()),email,displayName:input.displayName,phone:input.phone??null,revision:1,roles:{create:{role:'STUDENT'}}}});
         const added=await tx.enrollment.createMany({
           data:input.grants.map(g=>({...g,userId:user.id,activeFrom:g.activeFrom?new Date(g.activeFrom):new Date(),validUntil:g.validUntil?new Date(g.validUntil):null})),
           skipDuplicates:true,
         });
-        if(!existing || added.count>0 || nameChanged) {
-          await tx.user.update({where:{id:user.id},data:{revision:{increment:1}}});
-          await tx.auditEvent.create({data:{actorId:principal.userId,targetId:user.id,
-            action:'SUBSCRIBER_REGISTERED_LOGIN_PENDING',
-            details:{newProfile:!existing,addedGrants:added.count,loginPaused:true}}});
-        }
-        return {id:user.id,newSubscriber:!existing,assigned:added.count,loginPending:true};
+        await tx.auditEvent.create({data:{actorId:principal.userId,targetId:user.id,
+          action:'SUBSCRIBER_REGISTERED_LOGIN_PENDING',
+          details:{newProfile:true,addedGrants:added.count,loginPaused:true}}});
+        return {id:user.id,newSubscriber:true,assigned:added.count};
       },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
-      return reply.code(result.newSubscriber?201:200).send(result);
+      return reply.code(201).send(result);
     } catch(error) {
       if(error && typeof error==='object' && 'code' in error && ['P2002','P2034'].includes(String(error.code))) {
-        throw new AuthError(409,'Concurrent subscriber update. Retry the same Add Student action.');
+        throw new AuthError(409,'This email already exists or was registered concurrently. Refresh Subscribers before trying again.');
       }
       throw error;
     }
   });
 
-  // CSV import does not create a login or bypass approval. A single request is atomic:
-  // bad rows, conflicting identities, and concurrent updates reject the whole batch.
-  app.post('/v1/admin/subscribers/import', async (req,reply)=>{
-    const principal=await authenticate(req); assertRole(principal,['SUPER_ADMIN']);
-    const input=bulkStudentInput.parse(req.body);
-    const emails=input.rows.map(row=>normalizeSubscriberEmail(row.email));
-    const windows=input.rows.map((row,index)=>{
-      const window=resolveImportWindow(row,input.activeFrom,input.validUntil);
-      if(!window)throw new AuthError(422,`CSV row ${index+2}: expiry must follow activation date`);
-      return window;
-    });
-    if(new Set(emails).size!==emails.length) throw new AuthError(422,'CSV contains duplicate student emails');
-    const grants=input.planIds.flatMap(planId=>input.subjectIds.map(subjectId=>({
-      courseId:input.courseId,programmeId:input.programmeId,subjectId,planId,activeFrom:input.activeFrom,validUntil:input.validUntil,
-    })));
-    if(grants.length*emails.length>4000) throw new AuthError(413,'Too many access grants; import a smaller file');
-    try {
+  app.post('/v1/admin/subscribers/import/validate',async req=>{
+    const principal=await authenticate(req);assertRole(principal,['SUPER_ADMIN']);
+    const input=parseImportInput(req.body);
+    const {issues}=await db.$transaction(tx=>validateImport(tx,input));
+    return {valid:issues.length===0,rows:input.rows.length,issues};
+  });
+
+  // New students only. Every row and duplicate is rechecked at commit time;
+  // one invalid/existing email rolls back the complete file without altering users.
+  app.post('/v1/admin/subscribers/import',async(req,reply)=>{
+    const principal=await authenticate(req);assertRole(principal,['SUPER_ADMIN']);
+    const input=parseImportInput(req.body);
+    try{
       const counts=await db.$transaction(async tx=>{
-        await ensureApprovedGrants(tx,grants);
-        const course=await tx.academicCourse.findUnique({where:{id:input.courseId},select:{name:true,code:true}});
-        if(!course) throw new AuthError(422,'Selected course no longer exists');
-        if(input.rows.some(row=>row.course &&
-            ![course.name.toLowerCase(),course.code.toLowerCase()].includes(row.course.trim().toLowerCase())))
-          throw new AuthError(422,'CSV course must match the selected course on every row');
-        const existing=await tx.user.findMany({where:{email:{in:emails,mode:'insensitive'}},include:{roles:true}});
-        if(existing.length!==new Set(existing.map(u=>u.email?.toLowerCase())).size) throw new AuthError(409,'Duplicate existing email identities must be resolved first');
-        const byEmail=new Map(existing.map(u=>[u.email!.toLowerCase(),u]));
-        for(const user of existing){const conflict=existingSubscriberConflict([user]);if(conflict)throw new AuthError(409,conflict);}
-        let created=0,updated=0,grantsAdded=0,grantsUpdated=0;
-        const newAudits:Array<{actorId:string;targetId:string;action:string;details:Prisma.InputJsonValue}>=[];
-        for(let i=0;i<input.rows.length;i++){
-          const row=input.rows[i]!,email=emails[i]!;
-          const old=byEmail.get(email);
-          const user=old ? await tx.user.update({where:{id:old.id},data:{displayName:row.name,phone:row.phone??old.phone,revision:{increment:1}}})
-            : await tx.user.create({data:{identitySub:pendingIdentitySub(randomUUID()),displayName:row.name,email,phone:row.phone??null,revision:1,roles:{create:{role:'STUDENT'}}}});
-          if(old)updated++;else created++;
-          const access=windows[i]!;
-          // Explicit replacement revokes every prior course/programme for this
-          // matched student inside the same serializable import transaction.
-          const revoked=old&&input.replaceExisting
-            ? (await tx.enrollment.deleteMany({where:{userId:user.id}})).count : 0;
-          const changed=input.replaceExisting?{count:0}:await tx.enrollment.updateMany({where:{userId:user.id,courseId:input.courseId,programmeId:input.programmeId,subjectId:{in:input.subjectIds},planId:{in:input.planIds}},data:{activeFrom:access.activeFrom,validUntil:access.validUntil}});
-          const added=await tx.enrollment.createMany({data:grants.map(g=>({userId:user.id,courseId:g.courseId,programmeId:g.programmeId,subjectId:g.subjectId,planId:g.planId,activeFrom:access.activeFrom,validUntil:access.validUntil})),skipDuplicates:true});
-          grantsAdded+=added.count;grantsUpdated+=changed.count;
-          newAudits.push({actorId:principal.userId,targetId:user.id,action:'SUBSCRIBER_CSV_IMPORTED',details:{created:!old,grantsAdded:added.count,datesUpdated:changed.count,replacedExisting:input.replaceExisting,grantsRevoked:revoked,activation:access.activeFrom.toISOString(),expiry:access.validUntil?.toISOString()??null,loginPending:true}});
+        const {issues,grants}=await validateImport(tx,input);
+        if(issues.length)throw new AuthError(409,`No students imported. ${issues.slice(0,8).map(issue=>`Row ${issue.row} (${issue.email}): ${issue.message}`).join(' · ')}${issues.length>8?` · ${issues.length-8} more issues. Validate the file to see all rows.`:''}`);
+        const audits:Array<{actorId:string;targetId:string;action:string;details:Prisma.InputJsonValue}>=[];
+        for(const row of input.rows){
+          const access=resolveImportWindow(row,input.activeFrom,input.validUntil)!;
+          const user=await tx.user.create({data:{identitySub:pendingIdentitySub(randomUUID()),displayName:row.name,email:normalizeSubscriberEmail(row.email),phone:row.phone??null,revision:1,roles:{create:{role:'STUDENT'}},enrollments:{create:grants.map(g=>({courseId:g.courseId,programmeId:g.programmeId,subjectId:g.subjectId,planId:g.planId,...access}))}}});
+          audits.push({actorId:principal.userId,targetId:user.id,action:'SUBSCRIBER_CSV_IMPORTED',details:{created:true,grantsAdded:grants.length,activation:access.activeFrom.toISOString(),expiry:access.validUntil?.toISOString()??null}});
         }
-        await tx.auditEvent.createMany({data:newAudits});
-        return {created,updated,grantsAdded,grantsUpdated,rows:input.rows.length};
+        await tx.auditEvent.createMany({data:audits});
+        return {created:input.rows.length,grantsAdded:input.rows.length*grants.length,rows:input.rows.length};
       },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,timeout:60_000});
-      return reply.code(200).send(counts);
-    } catch(error){
-      if(error && typeof error==='object' && 'code' in error && ['P2002','P2034'].includes(String(error.code)))
-        throw new AuthError(409,'Concurrent subscriber import. Refresh and retry the same CSV.');
+      return reply.code(201).send(counts);
+    }catch(error){
+      if(error&&typeof error==='object'&&'code' in error&&['P2002','P2034'].includes(String(error.code)))throw new AuthError(409,'No students imported. Another upload or account change conflicted with this file. Validate it again to check for existing emails.');
       throw error;
     }
   });
@@ -250,7 +311,7 @@ export function registerSubscribers(
     try { await db.$transaction(async tx=>{
       await ensureApprovedGrants(tx,input.grants);
       const users=await tx.user.findMany({where:{id:{in:input.userIds},enabled:true,roles:{some:{role:'STUDENT'}}},select:{id:true}});
-      if(users.length!==input.userIds.length) throw new AuthError(422,'All selected subscribers must be active student accounts');
+      if(users.length!==input.userIds.length) throw new AuthError(422,'All selected subscribers must have unlocked student features');
       for(const id of input.userIds) {
         await tx.enrollment.createMany({data:input.grants.map(g=>({userId:id,...g,activeFrom:g.activeFrom?new Date(g.activeFrom):new Date(),validUntil:g.validUntil?new Date(g.validUntil):null})),skipDuplicates:true});
         await tx.user.update({where:{id},data:{revision:{increment:1}}});

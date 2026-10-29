@@ -1,0 +1,6 @@
+CREATE TABLE "EmployeeProfile"("userId" UUID PRIMARY KEY REFERENCES "User"("id") ON DELETE CASCADE,"employeeCode" TEXT NOT NULL,"department" TEXT NOT NULL,"designation" TEXT NOT NULL);
+CREATE TABLE "ModulePermission"("userId" UUID REFERENCES "User"("id") ON DELETE CASCADE,"module" TEXT NOT NULL,"canView" BOOLEAN NOT NULL DEFAULT FALSE,"canManage" BOOLEAN NOT NULL DEFAULT FALSE,PRIMARY KEY("userId","module"));
+CREATE TABLE "WatermarkSettings"("id" TEXT PRIMARY KEY DEFAULT 'default',"position" TEXT NOT NULL DEFAULT 'center',"color" TEXT NOT NULL DEFAULT '#64748b',"opacity" DOUBLE PRECISION NOT NULL DEFAULT 0.12,"rotation" INTEGER NOT NULL DEFAULT -20,"fontSize" INTEGER NOT NULL DEFAULT 24,"revision" INTEGER NOT NULL DEFAULT 0);
+INSERT INTO "WatermarkSettings"("id") VALUES('default');
+CREATE TABLE "MaterialView"("userId" UUID REFERENCES "User"("id") ON DELETE CASCADE,"documentId" UUID REFERENCES "Document"("id") ON DELETE CASCADE,"firstOpenedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"lastOpenedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"opens" INTEGER NOT NULL DEFAULT 1,PRIMARY KEY("userId","documentId"));
+CREATE INDEX "MaterialView_lastOpenedAt_idx" ON "MaterialView"("lastOpenedAt");

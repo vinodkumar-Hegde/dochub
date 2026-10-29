@@ -7,3 +7,12 @@ test('student session visibility checks exact active enrollment and publication'
 test('today uses Indian standard time boundaries',()=>{const where=sessionDateFilter('Today',new Date('2026-10-28T21:00:00Z'));assert.equal(where.startAt?.gte?.toISOString(),'2026-10-28T18:30:00.000Z');});
 
 test('scheduled tab contains scheduled sessions without changing admin upcoming semantics',()=>{assert.deepEqual(sessionDateFilter('Scheduled'),{status:'SCHEDULED'});assert.ok(sessionDateFilter('Upcoming').startAt?.gte);});
+
+import {pastSessionIsReadOnly} from './sessions-policy.js';
+test('only super admins may change sessions after their end or when completed',()=>{
+ const now=new Date('2026-10-30T10:00:00Z');
+ assert.equal(pastSessionIsReadOnly(['CONTENT_MANAGER'],now,'SCHEDULED',now),true);
+ assert.equal(pastSessionIsReadOnly(['SUPER_ADMIN'],new Date('2026-10-29'),'COMPLETED',now),false);
+ assert.equal(pastSessionIsReadOnly(['CONTENT_MANAGER'],new Date('2026-10-31'),'SCHEDULED',now),false);
+ assert.equal(pastSessionIsReadOnly(['CONTENT_MANAGER'],new Date('2026-10-31'),'COMPLETED',now),true);
+});

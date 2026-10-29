@@ -18,3 +18,11 @@ test('existing four-column exports remain compatible',()=>{
   assert.equal(result.errors.length,0);
   assert.equal(result.rows[0]?.activationDate,undefined);
 });
+
+import {subscriberCsvTemplate} from '../../src/subscriber-csv.ts';
+test('template omits course and uses the selected dates',()=>{
+ const csv=subscriberCsvTemplate('2026-10-29','2027-10-28');
+ const result=parseSubscriberCsv(csv);
+ assert.deepEqual(result.errors,[]);assert.equal(csv.split('\n')[0]?.includes('Course'),false);
+ assert.equal(result.rows[0]?.activationDate,'2026-10-29');assert.equal(result.rows[0]?.expiryDate,'2027-10-28');
+});

@@ -15,7 +15,7 @@ export default function StudentSessionsTable({items,tab,onTab,loading,error,onAt
  const [confirmId,setConfirmId]=useState<string|null>(null);
  return <section className="student-session-section" aria-label="Student schedule">
   <nav className="student-session-tabs" aria-label="Schedule filters">{tabs.map(t=><button type="button" key={t} className={tab===t?'on':''} onClick={()=>{setConfirmId(null);onTab(t)}} disabled={loading} aria-pressed={tab===t}>{t}</button>)}</nav>
-  <p className="student-attendance-guidance">Attendance responses are saved once and cannot be changed. A response is not verification of attendance.</p>
+  <p className="student-attendance-guidance">Submit your response before the session ends. Submitted responses cannot be changed; ended sessions are read-only. A response is not verification of attendance.</p>
   {error&&<p role="alert" className="student-api-notice">{error}</p>}
   <div className="student-session-table-wrap" role="region" aria-label="Session schedule table" tabIndex={0}>
     <table className="student-session-table"><thead><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Faculty name</th><th scope="col">Subject</th><th scope="col">Programme name</th><th scope="col">Topic</th><th scope="col">Status</th><th scope="col">Attendance</th></tr></thead>
@@ -25,10 +25,10 @@ export default function StudentSessionsTable({items,tab,onTab,loading,error,onAt
      <td><strong>{s.topic}</strong>{s.platform==='YOUTUBE'&&s.youtubeUrl&&s.status!=='CANCELLED'&&s.status!=='POSTPONED'&&<a className="student-session-link" href={s.youtubeUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={13}/> Watch on YouTube</a>}</td>
      <td><span className={`student-session-status status-${s.status.toLowerCase()}`}>{statusLabel(s.status)}</span></td>
      <td>{s.attendance?<span className="student-attendance-locked" title="Your response is final"><LockKeyhole size={14}/><span>{label(s.attendance.response)}<small>Submitted · locked</small></span></span>:
-       s.status==='SCHEDULED'||s.status==='COMPLETED'?<div className="student-attendance-form">
+       s.status==='SCHEDULED'&&Date.parse(s.endAt)>Date.now()?<div className="student-attendance-form">
         <select value={choices[s.id]??''} aria-label={`Attendance response for ${s.topic}`} disabled={savingId!==null} onChange={e=>{setChoices(v=>({...v,[s.id]:e.target.value as StudentAttendanceIntent|''}));setConfirmId(null)}}><option value="">Choose response</option><option value="WILL_ATTEND">Will attend</option><option value="NOT_AVAILABLE">Not available</option><option value="WATCH_RECORDING">Watch recording</option></select>
         {confirmId===s.id?<div className="student-attendance-actions"><span className="student-attendance-final">Final submission?</span><button type="button" disabled={savingId!==null} onClick={()=>{const choice=choices[s.id];if(choice)void onAttendance(s.id,choice).then(()=>setConfirmId(null)).catch(()=>{})}}>Confirm</button><button type="button" disabled={savingId!==null} onClick={()=>setConfirmId(null)}>Cancel</button></div>:<button type="button" disabled={!choices[s.id]||savingId!==null} onClick={()=>setConfirmId(s.id)}>{savingId===s.id?'Saving…':'Submit'}</button>}
-       </div>:<span className="student-session-no-link">Unavailable</span>}</td>
+       </div>:<span className="student-session-no-link"><LockKeyhole size={13}/>{Date.parse(s.endAt)<=Date.now()||s.status==='COMPLETED'?'Session ended · Read only':'Unavailable'}</span>}</td>
     </tr>)}</tbody></table>
    {!loading&&!items.length&&!error&&<p className="student-session-table-empty">No sessions in the {tab.toLowerCase()} view.</p>}
   </div>

@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import { basename, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
+import { boundedWork } from './bounded-work.js';
 import { previewPageKey } from './document-permissions.js';
 
 /** Bound per-process memory and temporary storage independent of PDF length. */
@@ -51,45 +52,51 @@ export async function createPrivatePagePreviews(
   tempDir: string,
   versionId: string,
   pageCount: number,
+  options: {renderConcurrency:number; uploadConcurrency:number} = {renderConcurrency:2,uploadConcurrency:2},
 ): Promise<void> {
   const batches = planPreviewBatches(pageCount);
-  const prefix = join(tempDir, 'preview');
-  const filePrefix = basename(prefix) + '-';
   let uploaded = 0;
 
-  for (const [first, last] of batches) {
-    await renderBatch(pdfPath, prefix, first, last);
-    const files = (await fs.readdir(tempDir))
-      .filter(name => name.startsWith(filePrefix) && name.endsWith('.jpg'))
-      .map(name => ({ name, page: Number(name.slice(filePrefix.length, -4)) }))
-      .sort((a, b) => a.page - b.page);
-    const count = last - first + 1;
-    if (files.length !== count) {
-      throw new Error(`Preview pages ${first}-${last}: expected ${count} files, got ${files.length}`);
-    }
-    for (let i = 0; i < count; i++) {
-      const { name, page } = files[i]!;
-      if (page !== first + i) throw new Error(`Missing or duplicate PDF preview page ${first + i}`);
-      const filename = join(tempDir, name);
-      const stat = await fs.stat(filename);
-      if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_PREVIEW_BYTES) {
-        throw new Error(`Invalid PDF preview image size at page ${page}`);
+  await boundedWork(batches, options.renderConcurrency, async ([first,last]) => {
+    // Separate directories prevent one renderer from collecting another batch's files.
+    const batchDir = await fs.mkdtemp(join(tempDir, 'batch-'));
+    const prefix = join(batchDir, 'preview');
+    const filePrefix = basename(prefix) + '-';
+    try {
+      await renderBatch(pdfPath, prefix, first, last);
+      const files = (await fs.readdir(batchDir))
+        .filter(name => name.startsWith(filePrefix) && name.endsWith('.jpg'))
+        .map(name => ({ name, page: Number(name.slice(filePrefix.length, -4)) }))
+        .sort((a, b) => a.page - b.page);
+      const count = last - first + 1;
+      if (files.length !== count) {
+        throw new Error(`Preview pages ${first}-${last}: expected ${count} files, got ${files.length}`);
       }
-      // Read only a single page into process memory at a time. Never upload
-      // public renditions or expose raw S3 keys to the frontend.
-      await s3.send(new PutObjectCommand({
-        Bucket: bucket,
-        Key: previewPageKey(versionId, page),
-        Body: await fs.readFile(filename),
-        ContentType: 'image/jpeg',
-        CacheControl: 'private, no-store',
-        ServerSideEncryption: 'aws:kms',
-      }));
-      await fs.unlink(filename);
-      uploaded++;
-    }
-    // Progress is intentionally metadata-only: no file content or personal data.
-    console.info(`Private PDF preview progress: ${uploaded}/${pageCount} pages`);
-  }
+      for(const [i,file] of files.entries()){
+        if(file.page!==first+i)throw new Error(`Missing or duplicate PDF preview page ${first+i}`);
+      }
+      await boundedWork(files, options.uploadConcurrency, async ({name,page}) => {
+        const filename = join(batchDir, name);
+        const stat = await fs.stat(filename);
+        if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_PREVIEW_BYTES) {
+          throw new Error(`Invalid PDF preview image size at page ${page}`);
+        }
+        // Each upload holds one page; overall memory is bounded by concurrency. Never upload
+        // public renditions or expose raw S3 keys to the frontend.
+        await s3.send(new PutObjectCommand({
+          Bucket: bucket,
+          Key: previewPageKey(versionId, page),
+          Body: await fs.readFile(filename),
+          ContentType: 'image/jpeg',
+          CacheControl: 'private, no-store',
+          ServerSideEncryption: 'aws:kms',
+        }));
+        await fs.unlink(filename);
+        uploaded++;
+      });
+      // Progress is intentionally metadata-only: no file content or personal data.
+      console.info(`Private PDF preview progress: ${uploaded}/${pageCount} pages`);
+    } finally {await fs.rm(batchDir,{recursive:true,force:true});}
+  });
   if (uploaded !== pageCount) throw new Error(`Incomplete PDF preview: uploaded ${uploaded}/${pageCount}`);
 }

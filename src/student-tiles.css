@@ -80,3 +80,15 @@
 
 .st-learning-programme{background:var(--programme-bg,#f2f6ff);border-color:var(--programme-border,#dce6f2)}
 .st-learning-programme:hover{background:var(--programme-hover,#e8f0ff);border-color:var(--programme-hover-border,#b8cbed)}
+
+/* Unread notifications remain visible on narrow screens, including their count. */
+.st-top-right .st-notifications-button.has-unread{position:relative;color:#d63848;background:#fff0f1;border-color:#f5c5cc;box-shadow:0 0 0 3px #e4485610}
+.st-top-right .st-notifications-button .st-notification-count{display:inline-flex;align-items:center;justify-content:center;position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;border-radius:10px;background:#d63848;color:white;font-size:9px;font-weight:750;border:2px solid white;line-height:1}
+.st-bell-motion{transform-origin:50% 12%;animation:st-bell-nudge 2.6s ease-in-out 3}
+.st-action.st-notices.has-unread{border-color:#f3b8c2;background:#fff5f6}.st-action.st-notices.has-unread .st-count{background:#d63848;color:#fff}.st-action.st-notices.has-unread strong{color:#be3042}
+.student-today-alert{display:flex;align-items:center;gap:14px;background:#fff4f4;border:1px solid #f1c4cb;border-left:4px solid #dc4356;border-radius:12px;padding:16px 18px;margin-bottom:23px;color:#ab2e40;animation:st-alert-entrance .35s ease-out}
+.student-today-alert-icon{display:grid;place-items:center;background:#ffe1e6;border-radius:11px;padding:11px;flex-shrink:0}.student-today-alert>div{flex:1;min-width:0}.student-today-alert strong{font-size:13px}.student-today-alert p{font-size:12px;color:#a0606c;line-height:1.6;margin:5px 0 0;overflow-wrap:anywhere}.student-today-alert button{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid #edb5be;border-radius:8px;padding:10px 12px;background:#fff;color:#b93145;font-size:11px;font-weight:650;cursor:pointer;flex-shrink:0}
+@keyframes st-bell-nudge{0%,65%,100%{transform:rotate(0)}8%,24%{transform:rotate(12deg)}16%,32%{transform:rotate(-10deg)}40%{transform:rotate(4deg)}}
+@keyframes st-alert-entrance{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:660px){.student-today-alert{flex-wrap:wrap;gap:10px;padding:13px}.student-today-alert button{margin-left:0;width:100%}.student-today-alert strong{font-size:12px}}
+@media(prefers-reduced-motion:reduce){.st-bell-motion,.student-today-alert{animation:none}}

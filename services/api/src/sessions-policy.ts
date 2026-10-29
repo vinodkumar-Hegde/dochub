@@ -22,3 +22,5 @@ export function sessionDateFilter(tab:'Today'|'Upcoming'|'Completed'|'Scheduled'
   if(tab==='Scheduled')return {status:'SCHEDULED'};
   return {};
 }
+
+export function pastSessionIsReadOnly(roles:readonly string[],endAt:Date,status:string,now=new Date()):boolean{return !roles.includes('SUPER_ADMIN')&&(endAt<=now||status==='COMPLETED')}

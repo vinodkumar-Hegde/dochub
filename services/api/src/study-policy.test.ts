@@ -22,5 +22,9 @@ test('page bounds prevent invalid cross-version pagination',()=>{
   assert.equal(isStudyPageValid(2,3),true);
   assert.equal(isStudyPageValid(4,3),false);
   assert.equal(isStudyPageValid(1.5,3),false);
-  assert.equal(isStudyPageValid(2001,3000),false);
+  // The current reader supports every validated page, including large PDFs.
+  assert.equal(isStudyPageValid(2001,3000),true);
+  assert.equal(isStudyPageValid(3000,3000),true);
+  assert.equal(isStudyPageValid(3001,3000),false);
+  assert.equal(isStudyPageValid(0,3000),false);
 });

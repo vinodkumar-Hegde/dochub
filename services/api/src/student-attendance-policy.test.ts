@@ -8,10 +8,10 @@ test('one submitted response cannot change before or after a session', () => {
   assert.equal(attendanceMutationDecision('WILL_ATTEND','NOT_AVAILABLE'),'conflict');
   assert.equal(attendanceMutationDecision('WATCH_RECORDING','WILL_ATTEND'),'conflict');
 });
-test('cancelled, unpublished and postponed sessions cannot accept a new declaration', () => {
-  assert.equal(canSubmitStudentResponse('SCHEDULED'),true);
-  assert.equal(canSubmitStudentResponse('COMPLETED'),true);
-  assert.equal(canSubmitStudentResponse('CANCELLED'),false);
-  assert.equal(canSubmitStudentResponse('POSTPONED'),false);
-  assert.equal(canSubmitStudentResponse('DRAFT'),false);
+test('new responses are accepted only for scheduled sessions before the end',()=>{
+ const now=new Date('2026-10-30T10:00:00Z'),later=new Date('2026-10-30T11:00:00Z');
+ assert.equal(canSubmitStudentResponse('SCHEDULED',later,now),true);
+ for(const status of ['COMPLETED','CANCELLED','POSTPONED','DRAFT'] as const)assert.equal(canSubmitStudentResponse(status,later,now),false);
+ assert.equal(canSubmitStudentResponse('SCHEDULED',now,now),false);
+ assert.equal(canSubmitStudentResponse('SCHEDULED',new Date('2026-10-29'),now),false);
 });

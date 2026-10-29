@@ -11,6 +11,8 @@ import { awsClients } from './aws.js';
 import { z } from 'zod';
 import { assertWorkerPrerequisites } from './worker-prerequisites.js';
 import { createPrivatePagePreviews } from './document-preview-render.js';
+import {publishRequestedVersion} from './document-publication.js';
+import {reusablePdfVerification} from './pdf-verification-policy.js';
 import {previewJob} from './pdf-preview-job-policy.js';
 
 // Refuse SQS polling if malware scanning or PDF validation is not operational.
@@ -37,6 +39,7 @@ async function execTool(command: string, args: string[], timeoutMs = 120000): Pr
 
 type ProtectedPdfVersion = {
   objectKey:string; objectVersionId:string|null; sizeBytes:bigint; pageCount:number|null;
+  verifiedAt:Date|null;verifiedObjectVersionId:string|null;verificationPolicy:string|null;
 };
 /** One authoritative scan, validation and bounded render path for queued and
  * exceptional repair jobs. Never called from any HTTP document-open request. */
@@ -50,13 +53,22 @@ async function verifyAndRenderPrivatePages(version:ProtectedPdfVersion,dir:strin
   const fd=await fs.open(path,'r');const header=Buffer.alloc(5);
   try{await fd.read(header,0,5,0);}finally{await fd.close();}
   if(header.toString('ascii')!=='%PDF-')throw new Error('Invalid PDF signature');
-  await execTool('clamscan',['--no-summary','--max-filesize=0','--max-scansize=0',path],20*60*1000);
-  const info=await execTool('pdfinfo',[path]);
-  if(/^Encrypted:\s*yes\b/im.test(info))throw new Error('Password-protected PDF files are not supported');
-  const pages=Number(/^Pages:\s*(\d+)$/m.exec(info)?.[1]);
-  if(!Number.isSafeInteger(pages)||pages<1)throw new Error('Could not validate PDF pages');
-  if(version.pageCount!==null&&version.pageCount!==pages)throw new Error('Verified PDF page count changed');
-  await createPrivatePagePreviews(s3,cfg.S3_BUCKET,path,dir,versionId,pages);
+  const reusable = reusablePdfVerification(version,cfg.PDF_VERIFICATION_POLICY);
+  let pages = version.pageCount!;
+  if(!reusable){
+    const scanStarted=Date.now();
+    await execTool('clamscan',['--no-summary','--fail-if-cvd-older-than=3','--max-filesize=0','--max-scansize=0',path],20*60*1000);
+    const info=await execTool('pdfinfo',[path]);
+    if(/^Encrypted:\s*yes\b/im.test(info))throw new Error('Password-protected PDF files are not supported');
+    pages=Number(/^Pages:\s*(\d+)$/m.exec(info)?.[1]);
+    if(!Number.isSafeInteger(pages)||pages<1)throw new Error('Could not validate PDF pages');
+    if(version.pageCount!==null&&version.pageCount!==pages)throw new Error('Verified PDF page count changed');
+    await db.documentVersion.update({where:{id:versionId},data:{verifiedAt:new Date(),verifiedObjectVersionId:version.objectVersionId,verificationPolicy:cfg.PDF_VERIFICATION_POLICY,pageCount:pages}});
+    console.info(JSON.stringify({event:'PDF_VERIFIED',versionId,durationMs:Date.now()-scanStarted,pages}));
+  }
+  const renderStarted=Date.now();
+  await createPrivatePagePreviews(s3,cfg.S3_BUCKET,path,dir,versionId,pages,{renderConcurrency:cfg.PDF_RENDER_CONCURRENCY,uploadConcurrency:cfg.PDF_UPLOAD_CONCURRENCY});
+  console.info(JSON.stringify({event:'PDF_PAGES_PREPARED',versionId,durationMs:Date.now()-renderStarted,pages,reusedVerification:reusable}));
   return pages;
 }
 
@@ -88,6 +100,7 @@ async function repairMissingPreviews(versionId:string):Promise<'complete'|'busy'
     });
     if(result.count!==1)throw new Error('PDF preview repair state changed');
     await db.auditEvent.create({data:{targetId:version.documentId,action:'PDF_PREVIEWS_REPAIRED',details:{versionId,pages}}});
+    await publishRequestedVersion(db,versionId).catch(error=>console.error('Deferred publication pending retry',error));
     console.info(`PDF preview repair completed: ${pages} protected pages`);
     return 'complete';
   }catch(error){
@@ -146,6 +159,7 @@ async function processVersion(versionId: string, receiptHandle: string): Promise
       await tx.document.updateMany({ where: { id: version.documentId, state: { notIn: ['PUBLISHED','DELETED'] } }, data: { state: 'READY' } });
       await tx.auditEvent.create({ data: { action: 'PDF_PROCESSING_SUCCEEDED', targetId: version.documentId, details: { versionId, pages } } });
     });
+    await publishRequestedVersion(db,versionId).catch(error=>console.error('Deferred publication pending retry',error));
     return 'complete';
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown processing error';
@@ -185,6 +199,8 @@ while (!stopping) {
         await sqs.send(new ChangeMessageVisibilityCommand({ QueueUrl: cfg.SQS_QUEUE_URL, ReceiptHandle: msg.ReceiptHandle, VisibilityTimeout: 60 }));
       }
     }
+    const pendingPublication=await db.documentVersion.findFirst({where:{state:'READY',previewReady:true,publishRequestedById:{not:null}},select:{id:true},orderBy:{updatedAt:'asc'}});
+    if(pendingPublication)await publishRequestedVersion(db,pendingPublication.id);
     // Low-frequency recovery of legacy validated versions missing protected
     // previews. At most one file per pass; never rescan completed versions.
     if(!stopping&&Date.now()>=nextReconciliation){
