@@ -1,0 +1,6 @@
+.dt-pictogram{display:inline-flex;position:relative;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid color-mix(in srgb,var(--dt-icon-primary),#fff 79%);border-radius:17px;background:var(--dt-icon-bg);color:var(--dt-icon-primary);isolation:isolate;overflow:hidden;transition:transform .25s cubic-bezier(.2,.8,.2,1),background .2s,border-color .2s}
+.dt-icon-halo{position:absolute;height:70%;width:70%;border:2px solid color-mix(in srgb,var(--dt-icon-secondary),transparent 74%);border-radius:50%;top:-26%;right:-22%;pointer-events:none}
+.dt-icon-primary{position:relative;z-index:1;filter:drop-shadow(0 1px 0 #ffffff99)}
+.dt-icon-accent{position:absolute;display:grid;place-items:center;right:9%;bottom:9%;color:var(--dt-icon-secondary);background:#fff;border-radius:8px;padding:2px;box-shadow:0 1px 5px #21325518;z-index:2}
+button:hover>.dt-pictogram{transform:translateY(-2px) rotate(-2deg)}
+@media(prefers-reduced-motion:reduce){.dt-pictogram{transition:none}button:hover>.dt-pictogram{transform:none}}

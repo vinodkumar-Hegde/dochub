@@ -1,0 +1,20 @@
+@@ -0,0 +1,19 @@
++/** Cognito email OTP remains the only token issuer. No local password or OTP storage. */
++export const normalizeSubscriberEmail = (email: string): string => email.trim().toLowerCase();
++
++export type OtpPoolReadiness = {
++  tier?: string;
++  factors?: readonly string[];
++  flows?: readonly string[];
++  emailDelivery?: string;
++  mfa?: string;
++};
++export function missingOtpConfiguration(config: OtpPoolReadiness): string[] {
++  const missing: string[] = [];
++  if (!['ESSENTIALS', 'PLUS'].includes(config.tier ?? '')) missing.push('Cognito Essentials or Plus');
++  if (!config.factors?.includes('EMAIL_OTP')) missing.push('Cognito EMAIL_OTP sign-in');
++  if (!config.flows?.includes('ALLOW_USER_AUTH')) missing.push('Cognito app client ALLOW_USER_AUTH');
++  if (config.emailDelivery !== 'DEVELOPER') missing.push('Amazon SES email delivery for Cognito');
++  if (config.mfa === 'ON') missing.push('Disable required MFA for passwordless sign-in');
++  return missing;
++}

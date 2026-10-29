@@ -1,0 +1,394 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentState {
+  UPLOADING
+  QUEUED
+  PROCESSING
+  READY
+  PUBLISHED
+  FAILED
+  QUARANTINED
+  DELETED
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  CONTENT_MANAGER
+  FACULTY
+  STUDENT
+}
+
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  identitySub  String       @unique
+  email        String?
+  displayName  String?
+  phone        String?
+  revision     Int          @default(0)
+  enabled      Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  roles        UserProfile[]
+  enrollments  Enrollment[]
+  studentCredential StudentCredential?
+  studentSessions StudentSession[]
+  studentAuthTokens StudentAuthToken[]
+  studyPages DocumentStudyPage[]
+  sessionResponses StudentSessionResponse[]
+}
+
+model UserProfile {
+  userId String   @db.Uuid
+  role   UserRole
+  user   User     @relation(fields: [userId], references: [id])
+  @@id([userId, role])
+}
+
+model Enrollment {
+  userId      String   @db.Uuid
+  courseId    String
+  programmeId String
+  subjectId   String
+  planId      String
+  activeFrom  DateTime @default(now())
+  validUntil  DateTime?
+  user        User     @relation(fields: [userId], references: [id])
+  @@id([userId, courseId, programmeId, subjectId, planId])
+  @@index([userId, validUntil])
+  @@index([userId, activeFrom, validUntil])
+  @@index([courseId, validUntil, userId])
+}
+
+model Document {
+  id          String        @id @default(uuid()) @db.Uuid
+  courseId    String
+  programmeId String
+  subjectId   String
+  title       String
+  state       DocumentState @default(UPLOADING)
+  publishedAt DateTime?
+  createdById String        @db.Uuid
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  versions    DocumentVersion[]
+  studyPages  DocumentStudyPage[]
+  grants      DocumentPlan[]
+  folderId    String?       @db.Uuid
+  folder      DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: Restrict)
+  hidden      Boolean      @default(false)
+  locked      Boolean      @default(false)
+  allowDownload Boolean     @default(false)
+  allowPrint    Boolean     @default(false)
+  revision    Int          @default(0)
+  @@index([courseId, programmeId, subjectId, state])
+  @@index([state, createdAt, id])
+  @@index([folderId])
+}
+
+model DocumentPlan {
+  documentId String   @db.Uuid
+  planId     String
+  document   Document @relation(fields: [documentId], references: [id])
+  @@id([documentId, planId])
+  @@index([planId, documentId])
+}
+
+model DocumentVersion {
+  id                  String        @id @default(uuid()) @db.Uuid
+  documentId          String        @db.Uuid
+  number              Int
+  state               DocumentState @default(UPLOADING)
+  objectKey           String        @unique
+  objectVersionId     String?
+  sizeBytes           BigInt
+  contentSha256       String?
+  s3UploadId          String?       @unique
+  pageCount           Int?
+  previewReady        Boolean       @default(false)
+  failureReason       String?
+  processingAttempt   Int           @default(0)
+  queuedAt            DateTime?
+  leaseUntil          DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  document            Document      @relation(fields: [documentId], references: [id])
+  studyPages          DocumentStudyPage[]
+  @@unique([documentId, number])
+  @@index([state, queuedAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorId     String?  @db.Uuid
+  action      String
+  targetId    String   @db.Uuid
+  details     Json
+  createdAt   DateTime @default(now())
+  @@index([targetId, createdAt])
+}
+
+model OutboxEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  topic       String
+  aggregateId String    @db.Uuid
+  payload     Json
+  createdAt   DateTime  @default(now())
+  dispatchedAt DateTime?
+  @@index([dispatchedAt, createdAt])
+}
+
+// Academic taxonomy is authoritative. Student entitlements reference these IDs;
+// schema-level foreign keys for legacy enrollment/document IDs will be added only
+// after existing records are audited and migrated.
+model AcademicCourse {
+  id          String              @id @default(uuid()) @db.Uuid
+  name        String
+  nameKey     String              @unique
+  code        String              @unique
+  revision    Int                 @default(0)
+  hidden      Boolean             @default(false)
+  accessLocked Boolean            @default(false)
+  archivedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  plans       AcademicPlan[]
+  programmes  AcademicProgramme[]
+}
+
+model AcademicPlan {
+  id          String              @id @default(uuid()) @db.Uuid
+  courseId    String              @db.Uuid
+  name        String
+  nameKey     String
+  revision    Int                 @default(0)
+  hidden      Boolean             @default(false)
+  accessLocked Boolean            @default(false)
+  archivedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  course      AcademicCourse      @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  programmes  ProgrammePlan[]
+  @@unique([courseId, nameKey])
+  @@index([courseId])
+}
+
+model AcademicSubject {
+  id          String              @id @default(uuid()) @db.Uuid
+  name        String
+  nameKey     String              @unique
+  revision    Int                 @default(0)
+  hidden      Boolean             @default(false)
+  accessLocked Boolean            @default(false)
+  archivedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  programmes  ProgrammeSubject[]
+}
+
+model AcademicProgramme {
+  id          String              @id @default(uuid()) @db.Uuid
+  courseId    String              @db.Uuid
+  name        String
+  nameKey     String
+  locked      Boolean             @default(false)
+  hidden      Boolean             @default(false)
+  accessLocked Boolean            @default(false)
+  archivedAt  DateTime?
+  revision    Int                 @default(0)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  course      AcademicCourse      @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  plans       ProgrammePlan[]
+  subjects    ProgrammeSubject[]
+  @@unique([courseId, nameKey])
+  @@index([courseId, locked])
+}
+
+model ProgrammePlan {
+  programmeId String            @db.Uuid
+  planId      String            @db.Uuid
+  programme   AcademicProgramme @relation(fields: [programmeId], references: [id], onDelete: Cascade)
+  plan        AcademicPlan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  @@id([programmeId, planId])
+}
+
+model ProgrammeSubject {
+  programmeId String            @db.Uuid
+  subjectId   String            @db.Uuid
+  programme   AcademicProgramme @relation(fields: [programmeId], references: [id], onDelete: Cascade)
+  subject     AcademicSubject   @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  @@id([programmeId, subjectId])
+}
+
+// Folders are scoped to a single locked academic programme and subject.
+// One level beneath the subject avoids ambiguous inheritance or folder cycles.
+model DocumentFolder {
+  id          String     @id @default(uuid()) @db.Uuid
+  courseId    String     @db.Uuid
+  programmeId String     @db.Uuid
+  subjectId   String     @db.Uuid
+  name        String
+  nameKey     String
+  color       String     @default("blue")
+  hidden      Boolean    @default(false)
+  locked      Boolean    @default(false)
+  allowDownload Boolean  @default(false)
+  allowPrint    Boolean  @default(false)
+  revision    Int        @default(0)
+  createdById String     @db.Uuid
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  documents   Document[]
+  @@unique([programmeId, subjectId, nameKey])
+  @@index([courseId, programmeId, subjectId])
+}
+
+enum LiveSessionStatus {
+  DRAFT
+  SCHEDULED
+  POSTPONED
+  CANCELLED
+  COMPLETED
+}
+
+enum LiveSessionPlatform {
+  DOCTUTORIALS_APP
+  YOUTUBE
+  ZOOM
+  DTLC
+}
+
+model LiveSession {
+  id          String              @id @default(uuid()) @db.Uuid
+  courseId    String              @db.Uuid
+  programmeId String              @db.Uuid
+  subjectId   String              @db.Uuid
+  topic       String
+  facultyName String
+  facultyId   String?             @db.Uuid
+  faculty     AcademicFaculty?    @relation(fields: [facultyId], references: [id], onDelete: Restrict)
+  startAt     DateTime
+  endAt       DateTime
+  platform    LiveSessionPlatform
+  youtubeUrl  String?
+  remarks     String?
+  status      LiveSessionStatus   @default(DRAFT)
+  publishedAt DateTime?
+  revision    Int                 @default(0)
+  createdById String              @db.Uuid
+  updatedById String              @db.Uuid
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  plans       LiveSessionPlan[]
+  studentResponses StudentSessionResponse[]
+  @@index([courseId, programmeId, startAt])
+  @@index([publishedAt, startAt, status])
+  @@index([facultyId])
+}
+
+model LiveSessionPlan {
+  sessionId String      @db.Uuid
+  planId    String      @db.Uuid
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  @@id([sessionId, planId])
+  @@index([planId, sessionId])
+}
+
+// An intent is a student's permanent declaration, not independently verified attendance.
+enum StudentAttendanceIntent {
+  WILL_ATTEND
+  NOT_AVAILABLE
+  WATCH_RECORDING
+}
+
+model StudentSessionResponse {
+  userId    String @db.Uuid
+  sessionId String @db.Uuid
+  response  StudentAttendanceIntent
+  markedAt  DateTime @default(now())
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  @@id([userId, sessionId])
+  @@index([sessionId])
+}
+
+// Central faculty directory; session text remains a historical display snapshot.
+model AcademicFaculty {
+  id           String        @id @default(uuid()) @db.Uuid
+  name         String
+  nameKey      String        @unique
+  revision     Int           @default(0)
+  hidden       Boolean       @default(false)
+  accessLocked Boolean       @default(false)
+  archivedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sessions     LiveSession[]
+}
+
+// Student authentication is independent of the employee Cognito identity pool.
+// No plaintext passwords or reusable bearer tokens are stored.
+model StudentCredential {
+  userId String @id @db.Uuid
+  passwordHash String
+  revision Int @default(1)
+  passwordUpdatedAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+}
+
+model StudentSession {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  tokenHash String @unique
+  credentialRevision Int
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([userId, revokedAt, expiresAt])
+  @@index([expiresAt])
+}
+
+model StudentAuthToken {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  tokenHash String @unique
+  purpose String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  usedAt DateTime?
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([userId, purpose, usedAt, expiresAt])
+}
+
+// Shared rate limits work across multiple API instances, unlike in-process maps.
+model StudentAuthThrottle {
+  key String @id
+  count Int @default(0)
+  expiresAt DateTime
+  @@index([expiresAt])
+}
+
+// Student-only study notes. Every request is re-authorized against current
+// course/programme/subject/plan grants and the selected published PDF version.
+model DocumentStudyPage {
+  id         String          @id @default(uuid()) @db.Uuid
+  userId     String          @db.Uuid
+  documentId String          @db.Uuid
+  versionId  String          @db.Uuid
+  page       Int
+  strokes    Json            @default("[]")
+  strokeCount Int             @default(0)
+  isRead     Boolean         @default(false)
+  revision   Int             @default(0)
+  updatedAt  DateTime        @updatedAt
+  user       User            @relation(fields:[userId],references:[id],onDelete:Restrict)
+  document   Document        @relation(fields:[documentId],references:[id],onDelete:Restrict)
+  version    DocumentVersion @relation(fields:[versionId],references:[id],onDelete:Restrict)
+  @@unique([userId,documentId,versionId,page])
+  @@index([documentId,versionId])
+}

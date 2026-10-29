@@ -1,0 +1,14 @@
+.cascade-context-strip{margin:0 0 12px;padding:10px 14px;border:1px solid #dbe5f0;border-radius:10px;background:#f8fbff;color:#263c58;font-size:12px}
+.cascade-context-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.cascade-context-heading>svg{color:#3868aa;flex:none}
+.cascade-context-heading strong{font-size:13px;font-weight:750}
+.cascade-context-subtle{display:inline-flex;align-items:center;gap:5px;color:#677c95;font-size:12px}
+.cascade-context-status{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:11px;font-weight:650;border-radius:7px;padding:3px 8px}
+.cascade-context-status.approved{background:#e9f7ef;color:#176b48}
+.cascade-context-status.blocked{background:#fff3e6;color:#92551f}
+.cascade-context-details{display:grid;grid-template-columns:minmax(135px,1fr) minmax(150px,1.4fr) minmax(150px,1.4fr);gap:12px;margin-top:9px;padding-top:9px;border-top:1px solid #e4edf7}
+.cascade-context-field{display:flex;flex-direction:column;min-width:0;gap:3px;line-height:1.4}
+.cascade-context-field small{color:#627791;font-size:11px}
+.cascade-context-field strong,.cascade-context-field span{overflow-wrap:anywhere;font-size:12px}
+.cascade-context-error{margin:6px 0 0;color:#ac263b}
+@media(max-width:700px){.cascade-context-details{grid-template-columns:1fr;gap:8px}.cascade-context-status{margin-left:0}}

@@ -1,0 +1,28 @@
+# Dependencies and build outputs
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+coverage/
+*.tsbuildinfo
+# Private configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+# Terraform and local machine state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+.DS_Store
+*.log
+# Generated or temporary PDF material
+tmp/
+*.pdf.tmp

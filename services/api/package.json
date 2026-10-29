@@ -1,0 +1,33 @@
+{
+  "name": "@docusend/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "worker": "tsx src/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/*.test.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.800.0",
+    "@aws-sdk/client-sesv2": "^3.800.0",
+    "@aws-sdk/client-sqs": "^3.800.0",
+    "@aws-sdk/s3-request-presigner": "^3.800.0",
+    "@fastify/cors": "^10.1.0",
+    "@fastify/helmet": "^13.0.0",
+    "@prisma/client": "^6.7.0",
+    "fastify": "^5.3.0",
+    "jose": "^6.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "prisma": "^6.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}

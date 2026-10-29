@@ -1,0 +1,15 @@
+.auth-page{min-height:100vh;display:grid;place-items:center;background:#f3f6fa;color:#172338;padding:24px;font-family:Inter,system-ui,sans-serif}.auth-card{background:#fff;max-width:410px;width:100%;padding:40px;border:1px solid #dbe3ed;border-radius:18px;box-shadow:0 15px 45px #17233812;text-align:center}.auth-card>img{height:52px;max-width:120px;object-fit:contain}.auth-card h1{font-size:29px;margin:14px 0 8px}.auth-card p{line-height:1.6;color:#4f5d70}.auth-card .auth-error{color:#9f1e32;background:#fff1f3;padding:12px;border-radius:8px}.auth-primary,.auth-profiles button{width:100%;margin-top:16px;border:0;background:#254fb5;color:#fff;padding:13px;border-radius:9px;font-weight:650;cursor:pointer}.auth-primary:disabled{background:#aab3c3;cursor:not-allowed}.auth-profiles button{display:block;text-align:left}.auth-link{margin-top:20px;border:0;background:none;cursor:pointer}.auth-session-bar{position:fixed;z-index:99999;bottom:12px;right:12px;background:#172338;color:#fff;border-radius:9px;padding:9px 12px;font:12px system-ui;display:flex;align-items:center;gap:20px;box-shadow:0 6px 22px #0002}.auth-session-bar span,.auth-session-bar button{display:inline-flex;align-items:center;gap:6px}.auth-session-bar button{border:1px solid #ffffff65;border-radius:5px;background:transparent;color:#fff;padding:6px 8px;cursor:pointer}.auth-session-bar>div{display:flex;gap:8px}@media(max-width:500px){.auth-session-bar{left:8px;right:8px;bottom:8px;justify-content:space-between}.auth-card{padding:26px}}
+
+.auth-otp-form{display:flex;flex-direction:column;gap:12px;margin-top:22px;text-align:left}
+.auth-otp-form label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;color:#2b3c57}
+.auth-otp-form input{border:1px solid #d4e0ee;border-radius:9px;padding:13px 12px;font:inherit;font-size:15px;width:100%;box-sizing:border-box;min-width:0}
+.auth-otp-form input:focus-visible{outline:2px solid #3569d5;outline-offset:2px}
+.auth-otp-form .auth-primary{margin-top:4px;display:flex;align-items:center;justify-content:center;gap:9px}
+.auth-otp-info{font-size:12px!important;margin:0!important;text-align:left;color:#4b6482!important}
+.auth-secondary-actions{display:flex;justify-content:space-between;gap:8px}
+.auth-secondary-actions .auth-link{margin-top:12px;color:#245ab6}
+.auth-admin-separator{margin-top:24px;padding-top:18px;border-top:1px solid #e5eaf2;color:#67758d;font-size:12px}
+.auth-admin-login{font-weight:650;color:#244c99;margin-top:12px}
+/* Accessible low-density action links for student account activation and recovery. */
+.auth-secondary-actions .auth-link{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:38px;color:#244c99;text-decoration:underline;text-underline-offset:3px}
+.auth-secondary-actions .auth-link:focus-visible,.auth-admin-login:focus-visible{outline:2px solid #3569d5;outline-offset:3px;border-radius:5px}

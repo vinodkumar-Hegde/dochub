@@ -1,0 +1,30 @@
+/* Small navigation-only overlay. Retains the approved reader layout. */
+.study-page-column {position:relative;}
+.study-edge-nav {
+ position:absolute;
+ z-index:12;
+ top:calc(50% - 26px);
+ display:flex;
+ align-items:center;
+ justify-content:center;
+ min-width:44px;
+ min-height:52px;
+ padding:0;
+ color:#173b70;
+ background:rgba(255,255,255,.96);
+ border:1px solid #b9cce5;
+ border-radius:12px;
+ box-shadow:0 3px 14px rgba(15,37,70,.15);
+ cursor:pointer;
+}
+.study-edge-nav-prev{left:10px;}
+.study-edge-nav-next{right:10px;}
+.study-edge-nav:hover:not(:disabled),.study-edge-nav:focus-visible{background:#e8f2ff;border-color:#5277b4;}
+.study-edge-nav:focus-visible{outline:3px solid #3377c9;outline-offset:2px;}
+.study-edge-nav:disabled{opacity:.3;cursor:not-allowed;}
+@media(max-width:700px){
+ .study-edge-nav-prev{left:4px;}
+ .study-edge-nav-next{right:4px;}
+ .study-edge-nav{min-width:44px;min-height:48px;border-radius:10px;}
+}
+@media print{.study-edge-nav{display:none!important;}}

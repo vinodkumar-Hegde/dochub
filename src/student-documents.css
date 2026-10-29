@@ -1,0 +1,76 @@
+.student-api-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 15px;padding:10px 13px;border:1px solid #edc0bf;border-radius:10px;background:#fff3f1;color:#983e38;font-size:13px}
+.student-api-notice button,.student-refresh,.student-load-more button{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid #cbdbee;border-radius:9px;background:#fff;color:#2e609f;font-size:12px;font-weight:750;cursor:pointer}
+.student-pinned-note{font-size:12px;color:#6c8098;margin:8px 0 18px}
+.student-load-more{display:flex;justify-content:center;padding:22px}
+.student-load-more button:disabled{opacity:.55;cursor:wait}
+.student-refresh:focus-visible,.student-api-notice button:focus-visible,.student-load-more button:focus-visible{outline:3px solid #8db6f0;outline-offset:2px}
+.student-session-tabs{margin:16px 0;display:flex;gap:6px;flex-wrap:wrap}
+.student-session-tabs button{border:1px solid #d7e3f1;background:#fff;border-radius:8px;padding:8px 12px;cursor:pointer}
+.student-session-tabs button.on{background:#eaf2ff;border-color:#7da5ee;color:#1e52a7}
+.student-session-list{display:grid;gap:9px}
+.student-session-entry{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid #dce5f1;border-radius:12px;padding:14px;background:#fff}
+.student-session-entry-main{display:flex;align-items:flex-start;gap:12px}
+.student-session-entry strong,.student-session-entry small{display:block}
+.student-session-entry small{color:#60728b;margin-top:5px}
+.student-session-entry small svg{vertical-align:middle}
+.student-session-entry a{display:flex;gap:5px;align-items:center;font-size:12px;text-decoration:none;color:#2257ab}
+.student-session-entry p{font-size:12px;color:#66778b;margin:4px 0 0}
+@media(max-width:650px){.student-session-entry{flex-direction:column;align-items:flex-start}}
+.student-folder-tabs{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0 18px}
+.student-folder-tabs button{display:flex;align-items:center;gap:7px;padding:10px 12px;border:1px solid #dbe4f0;border-radius:9px;background:#fff;color:#385574;cursor:pointer}
+.student-folder-tabs button.selected{background:#edf4ff;border-color:#88b0f0;color:#2455a4}
+/* Dense, responsive student session grid, not repeated presentation cards. */
+.student-session-table-wrap{overflow-x:auto;border:1px solid #d9e4f2;border-radius:12px;background:#fff;box-shadow:0 3px 10px #1f395a08}
+.student-session-table{border-collapse:collapse;width:100%;min-width:755px;text-align:left;font-size:12px;color:#334d6d}
+.student-session-table thead{background:#f4f7fb}
+.student-session-table th{padding:12px 13px;color:#7387a0;font-size:10px;letter-spacing:.045em;text-transform:uppercase;font-weight:800;border-bottom:1px solid #dce5f2;white-space:nowrap}
+.student-session-table td{padding:12px 13px;border-bottom:1px solid #e7edf5;vertical-align:middle}
+.student-session-table tbody tr:last-child td{border-bottom:0}
+.student-session-table tbody tr:hover{background:#f8fbff}
+.student-session-table td strong{display:block;color:#203b5e;font-size:12px}
+.student-session-table td small{display:flex;align-items:center;gap:5px;color:#70839b;font-size:11px;margin-top:5px;max-width:320px;overflow:hidden;text-overflow:ellipsis}
+.student-session-date{display:inline-flex;align-items:center;gap:6px;font-weight:800;white-space:nowrap}
+.student-session-status{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:6px;font-weight:750;font-size:10px;white-space:nowrap}
+.student-session-status.status-scheduled{background:#e7f1ff;color:#215cab}
+.student-session-status.status-completed{background:#e3f5ed;color:#147b52}
+.student-session-status.status-postponed{background:#fff2df;color:#98651b}
+.student-session-status.status-cancelled{background:#fff0f0;color:#a73742}
+.student-session-status.status-draft{background:#f1f2f5;color:#5b6777}
+.student-session-row.status-cancelled td:first-child{border-left:3px solid #db6370}
+.student-session-row.status-postponed td:first-child{border-left:3px solid #e5aa4f}
+.student-session-row.status-completed td:first-child{border-left:3px solid #42b488}
+.student-session-row.status-scheduled td:first-child{border-left:3px solid #5b9ce8}
+.student-session-link{display:inline-flex;gap:5px;align-items:center;border:1px solid #c9daf2;border-radius:8px;padding:6px 9px;color:#245da3;text-decoration:none;white-space:nowrap;font-weight:700}
+.student-session-link:hover{background:#eaf2ff}
+.student-session-no-link{font-size:11px;color:#8493a6;white-space:nowrap}
+.student-session-tabs button{min-width:83px;font-weight:650}
+.student-session-tabs button.on{background:#e6efff;color:#1c4e98;border-color:#739eeb;box-shadow:inset 0 -2px #346ec5}
+
+/* Accessible, dense student schedule with fixed author-approved column order. */
+.student-session-section{max-width:100%;min-width:0}
+.student-attendance-guidance{font-size:12px;color:#5c708b;margin:0 0 14px}
+.student-session-table{min-width:1020px;table-layout:auto;font-size:12px}
+.student-session-table td{padding:13px 11px;line-height:1.5}
+.student-session-table th{font-size:11px;padding:13px 11px}
+.student-session-date-cell,.student-session-time-cell{white-space:nowrap;font-weight:650}
+.student-session-table td:nth-child(3){min-width:130px}
+.student-session-table td:nth-child(4){min-width:125px}
+.student-session-table td:nth-child(5){min-width:140px}
+.student-session-table td:nth-child(6){min-width:185px}
+.student-session-table td:nth-child(8){min-width:190px}
+.student-attendance-form{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.student-attendance-form select{border:1px solid #d3e0ed;border-radius:7px;padding:7px 6px;min-width:130px;max-width:165px;font-size:11px;color:#334d6d;background:#fff}
+.student-attendance-form button,.student-session-more button{border:1px solid #c7daf1;border-radius:7px;background:#eaf2ff;color:#2457a1;font-size:11px;font-weight:750;padding:7px 10px;cursor:pointer}
+.student-attendance-form button:disabled{opacity:.5;cursor:not-allowed}
+.student-attendance-actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.student-attendance-final{color:#a35c24;font-size:10px;font-weight:800}
+.student-attendance-locked{display:inline-flex;gap:7px;align-items:flex-start;font-weight:700;color:#176948}
+.student-attendance-locked span{display:flex;flex-direction:column}
+.student-attendance-locked small{font-weight:500;color:#6d8296;margin:2px 0 0}
+.student-session-table-empty{padding:30px;text-align:center;font-size:12px;color:#687e97}
+.student-session-load{display:flex;align-items:center;gap:9px;padding:14px 0;font-size:12px;color:#667d99}
+.student-session-more{display:flex;justify-content:center;margin-top:14px}
+.student-attendance-footer{display:flex;align-items:center;gap:6px;margin:13px 0 0;color:#7790a5;font-size:11px}
+.student-session-table-wrap:focus-visible,.student-attendance-form select:focus-visible,.student-attendance-form button:focus-visible,.student-session-more button:focus-visible{outline:3px solid #8db6f0;outline-offset:2px}
+@media(max-width:700px){.student-session-table-wrap{margin:0 -6px}.student-attendance-guidance{font-size:11px}}
+@media(prefers-reduced-motion:reduce){.student-session-tabs button,.student-attendance-form button{transition:none}}

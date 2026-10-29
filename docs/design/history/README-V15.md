@@ -1,0 +1,1 @@
+DocHub V15 — My Sessions redesigned with Today, Upcoming, Completed tabs, live search, desktop table and responsive mobile tiles. Attendance controls retained. Sessions derive from subscription-filtered mock data.

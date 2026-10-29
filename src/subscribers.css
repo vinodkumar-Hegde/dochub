@@ -1,0 +1,26 @@
+.subscriber-workspace .a-table-wrap { overflow-x:auto; }
+.subscriber-workspace table { min-width:820px; }
+.subscriber-person { display:flex;align-items:center;gap:10px;min-width:175px; }
+.subscriber-person > span:last-child { display:flex;flex-direction:column;gap:2px;min-width:0; }
+.subscriber-person strong { font-weight:650; }
+.subscriber-person small { color:#61718e;overflow-wrap:anywhere; }
+.subscriber-filters { flex-wrap:wrap; }
+.subscriber-notice { display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:9px;margin:10px 0;font-size:13px; }
+.subscriber-error { background:#fff0f1;color:#a3253e;border:1px solid #ffced5; }
+.subscriber-success { background:#eefaf3;color:#226e45;border:1px solid #bcebd1; }
+.subscriber-notice button { margin-left:auto; }
+.subscriber-empty { display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:26px;color:#596a82; }
+.subscriber-empty p { margin:0;max-width:470px;font-size:13px; }
+.subscriber-dialog { max-width:640px;max-height:calc(100vh - 50px);overflow:auto; }
+.subscriber-dialog h3 { margin:18px 0 8px;font-size:14px; }
+.subscriber-dialog .a-check-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px; }
+.subscriber-dialog .a-check { display:flex;gap:8px;align-items:center;padding:9px;border:1px solid #dfe5f0;border-radius:9px; }
+.subscriber-dialog label > input[type=date] { display:block;width:100%;max-width:260px;padding:10px;border:1px solid #dfe5f0;border-radius:8px;margin-top:6px; }
+.subscriber-hint {font-size:12px;color:#60738e; }
+@media(max-width:640px) { .subscriber-dialog {width:calc(100vw - 20px);max-height:calc(100dvh - 30px);} .subscriber-dialog .a-form-row {flex-wrap:wrap;} .subscriber-filters .a-search {width:100%;} }
+.subscriber-import-dialog{width:min(820px,95vw);max-height:90vh;overflow:auto}
+.subscriber-import-preview{overflow:auto;max-height:190px;border:1px solid var(--line,#dde4ef);border-radius:10px;margin:12px 0}
+.subscriber-import-preview table{width:100%;font-size:12px;border-collapse:collapse}
+.subscriber-import-preview td,.subscriber-import-preview th{padding:8px 10px;border-bottom:1px solid #e7edf5;text-align:left}
+.subscriber-import-error{margin-top:10px;color:#ac2438;font-size:12px}
+.subscriber-import-help{font-size:12px;color:#65738c;margin:8px 0 14px}

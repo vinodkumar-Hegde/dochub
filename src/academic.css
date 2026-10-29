@@ -1,0 +1,7 @@
+/* Academic Mapping network/error states within approved V20 layout. */
+.a-mapping-feedback { margin: 10px 0; padding: 11px 14px; border-radius: 9px; background: #f1f5f9; color: #334155; font-size: 13px; }
+.a-mapping-error { background: #fff1f2; color: #9f1239; }
+.a-mapping-error button { margin-left: 12px; text-decoration: underline; color: inherit; cursor: pointer; }
+
+/* Compact academic lifecycle controls; no change to V20 mapping layout. */
+.academic-manage{margin-top:16px}.academic-manage .a-panel-title{margin-bottom:12px}.academic-manage-list{display:grid;gap:4px}.academic-manage-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid var(--border,#e5eaf2)}.academic-manage-row>span:first-child{flex:1;min-width:0}.academic-manage-states{color:#6b7586}.academic-manage-options{display:grid;gap:12px;margin:16px 0}.academic-manage-options label{display:flex;align-items:center;gap:9px;font-size:14px}.academic-manage-warning{display:flex;gap:8px;align-items:flex-start;color:#9c451d;font-size:12px}.academic-faculty-inline{display:flex;gap:8px;align-items:center}.academic-faculty-inline input{min-width:160px;max-width:260px}.academic-manage-success{color:#126b4c;font-size:13px}.academic-manage-modal{max-width:460px}

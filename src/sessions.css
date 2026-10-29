@@ -1,0 +1,15 @@
+.session-toolbar{flex-wrap:wrap;gap:12px}
+.session-error,.session-success{display:flex;align-items:center;gap:8px;border:1px solid #ffc7d0;background:#fff4f5;padding:10px 13px;border-radius:8px;color:#a71e32;margin-bottom:12px;font-size:13px}
+.session-success{background:#edf9f1;color:#117849;border-color:#baebce}
+.session-actions{display:flex;gap:6px;align-items:center}
+.session-link{display:flex;gap:3px;align-items:center;font-size:11px;color:#2855a7}
+.session-empty{padding:28px;text-align:center;color:#7686a1}
+.session-drawer{width:min(650px,94vw);max-height:91vh;overflow-y:auto}
+.session-drawer h3{font-size:14px;margin:18px 0 9px}
+.session-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.session-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:600;color:#40526a}
+.session-form input,.session-form select,.session-form textarea{width:100%;border:1px solid #d8e2ef;border-radius:8px;padding:10px;font:inherit;color:#263b57;background:white}
+.session-wide{grid-column:1/-1}
+@media(max-width:580px){.session-form{grid-template-columns:1fr}.session-wide{grid-column:1}}
+
+.session-faculty-picker{display:flex;align-items:center;gap:8px;min-width:0}.session-faculty-picker select,.session-faculty-picker input{flex:1;min-width:0}.session-faculty-picker button{white-space:nowrap}
