@@ -1,5 +1,15 @@
 # DocHub DevOps handoff
 
+## Which environment file to use
+
+| Work | Example → actual file |
+|---|---|
+| Docker deployment (DevOps starting point) | `deploy/.env.example` → `deploy/.env` |
+| Frontend development | root `.env.example` → root `.env.local` |
+| API development without Docker | `services/api/.env.example` → `services/api/.env` |
+
+The root file configures the browser only. Configure S3, SES, SQS and database settings in the Docker/server file. Follow [AWS setup](AWS-SETUP.md) to provision resources and map their values into it. Setting env values does not create AWS resources.
+
 ## Components and ownership
 
 | Service | Entrypoint | Purpose |
