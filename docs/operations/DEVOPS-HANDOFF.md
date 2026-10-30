@@ -146,3 +146,7 @@ Rollback application images to the last compatible SHA. Prisma deploy does not r
 ## Local Docker troubleshooting
 
 If Docker reports exhausted default address pools, select an unused subnet in a local Compose network override or adjust Docker address pools. Do not delete networks belonging to other projects. This is host configuration, not an application dependency.
+
+## Repository
+
+Private repository: https://github.com/vinodkumar-Hegde/dochub. Default branch: `dev`; release branch: `prod`. The initial branch-protection API requests were rejected because this account requires GitHub Pro for private-repository protection. Upgrade the account or move to an organization plan that supports it, then enable the PR/check/review policies described above. Keep the repository private. The Verify workflow also supports manual runs from the Actions tab.
