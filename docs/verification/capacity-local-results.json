@@ -1,0 +1,127 @@
+{
+  "revision": "f54910d8166c712ab88f4aa0c511522af62dd4fa",
+  "target": {
+    "registered": 80000,
+    "simultaneouslyActive": 10000
+  },
+  "dataset": {
+    "students": 80000,
+    "materials": 100,
+    "activeSessions": 80000,
+    "enrollments": 80000,
+    "materialViews": 80000,
+    "auditEvents": 80000,
+    "courses": 1,
+    "programmes": 1,
+    "plans": 1,
+    "subjects": 1
+  },
+  "environment": {
+    "platform": "darwin/arm64 v22.23.3",
+    "database": "disposable PostgreSQL 16 Docker container",
+    "transport": "Fastify inject; no network, TLS, browser or AWS",
+    "readProbeConcurrency": 20,
+    "notA10000ConcurrentUserLoadTest": true
+  },
+  "results": {
+    "reads": {
+      "mode": "reads",
+      "students": 80000,
+      "materials": 100,
+      "measurements": [
+        {
+          "endpoint": "/v1/student/materials",
+          "requests": 200,
+          "concurrency": 20,
+          "statuses": {
+            "200": 200
+          },
+          "errors": [],
+          "elapsedMs": 437,
+          "requestsPerSecond": 457.4,
+          "p50Ms": 33,
+          "p95Ms": 125,
+          "queries": 2943
+        },
+        {
+          "endpoint": "/v1/student/catalogue",
+          "requests": 200,
+          "concurrency": 20,
+          "statuses": {
+            "200": 200
+          },
+          "errors": [],
+          "elapsedMs": 157,
+          "requestsPerSecond": 1271.8,
+          "p50Ms": 15,
+          "p95Ms": 24,
+          "queries": 2143
+        },
+        {
+          "endpoint": "/v1/student/notifications/unread",
+          "requests": 200,
+          "concurrency": 20,
+          "statuses": {
+            "200": 200
+          },
+          "errors": [],
+          "elapsedMs": 74,
+          "requestsPerSecond": 2689.4,
+          "p50Ms": 7,
+          "p95Ms": 13,
+          "queries": 943
+        },
+        {
+          "endpoint": "/auth/session",
+          "requests": 200,
+          "concurrency": 20,
+          "statuses": {
+            "200": 200
+          },
+          "errors": [],
+          "elapsedMs": 139,
+          "requestsPerSecond": 1441.3,
+          "p50Ms": 13,
+          "p95Ms": 18,
+          "queries": 2048
+        }
+      ],
+      "peakNodeRssMiB": 188,
+      "transport": "Fastify inject (no network/TLS)",
+      "cloudServices": "not exercised"
+    },
+    "fanout": {
+      "mode": "fanout",
+      "elapsedMs": 3154,
+      "recipients": 80000,
+      "queries": 17,
+      "peakNodeRssMiB": 828
+    },
+    "analytics": {
+      "mode": "analytics",
+      "students": 80000,
+      "materials": 100,
+      "measurements": [
+        {
+          "endpoint": "/v1/admin/analytics",
+          "requests": 1,
+          "concurrency": 1,
+          "statuses": {
+            "500": 1
+          },
+          "errors": [
+            "\nInvalid `db.user.findMany()` invocation in\n<repo>/services/api/src/workspace-controls.ts:62:12\n\n  59 const from=q.from?new Date(`${q.from}T00:00:00+05:30`):new Date(Date.now()-30*86400000),to=q.to?new Date(`${q.to}T23:59:59.999+05:30`):new Date();if(!Number.isFinite(+from)||!Number.isFinite(+to)||from>to)throw new AuthError(422,'Choose a valid date range');\n  60 const scope={...(q.courseId?{courseId:q.courseId}:{}),...(q.programmeId?{programmeId:q.programmeId}:{}),...(q.planId?{planId:q.planId}:{})};\n  61 const [users,docs,sessions,courses,plans,programmes]=await Promise.all([\n\u2192 62  db.user.findMany(\nAssertion violation on the database: `too many bind variables in prepared statement, expected maximum of 32767, received 32769`"
+          ],
+          "elapsedMs": 1854,
+          "requestsPerSecond": 0.5,
+          "p50Ms": 1854,
+          "p95Ms": 1854,
+          "queries": 14
+        }
+      ],
+      "peakNodeRssMiB": 709,
+      "transport": "Fastify inject (no network/TLS)",
+      "cloudServices": "not exercised"
+    }
+  }
+}

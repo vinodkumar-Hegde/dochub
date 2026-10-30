@@ -1,5 +1,9 @@
 # DocHub DevOps handoff
 
+## Capacity target and current release limit
+
+The requested target is 80,000 registered students and up to 10,000 simultaneously active. This capacity is **not validated**. The [capacity review](../verification/CAPACITY-80000.md) reproduces an analytics failure on an 80,000-student fixture and lists required polling, fanout and infrastructure work. Treat this handoff as staging/setup work, not approval for production at that load.
+
 ## Which environment file to use
 
 | Work | Example → actual file |

@@ -42,3 +42,7 @@ Configure GitHub repository branch protection and environment reviewers after th
 ## GitHub publication
 
 Repository: https://github.com/vinodkumar-Hegde/dochub (private), default branch dev, release branch prod. Hosted verification run https://github.com/vinodkumar-Hegde/dochub/actions/runs/40987335091 was blocked before any steps ran by an account billing/spending-limit error. Local checks above passed; hosted CI is still pending. Branch protection also requires a GitHub plan supporting private-repository protection and could not be enabled on the current plan.
+
+## Subsequent capacity assessment
+
+The [80,000-student / 10,000-active capacity review](CAPACITY-80000.md) found a reproducible admin analytics HTTP 500 at dataset scale. The earlier functional-test pass does not establish capacity readiness. See that report for measured results and release blockers.
