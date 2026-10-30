@@ -8,3 +8,4 @@
 .nc-message.unread{background:#fff6f6;box-shadow:inset 3px 0 #dd4355}.nc-message.unread .nc-message-icon{background:#ffe5e9;color:#ce354b}.nc-message.unread .nc-message-title i{background:#d63848;box-shadow:0 0 0 3px #d6384812}.nc-message.unread .nc-message-title{color:#9f3042}.nc-message.unread:hover{background:#ffedef}
 
 .nc-toolbar{flex-wrap:wrap;max-width:100%}
+.nc-delivery-status{padding:10px 14px;background:#eff5fd;border:1px solid #c9d9ef;border-radius:9px;color:#254b7e;font-size:13px;line-height:1.6}

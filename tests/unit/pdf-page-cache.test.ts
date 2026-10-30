@@ -13,3 +13,9 @@ test('2000-page scroll windows mount only visible pages plus a small overscan',(
  for(const top of [0,1000,500000,1999000]){const range=pdfVisibleRange(top,700,1000,2000);assert.ok(range.first>=1);assert.ok(range.last<=2000);assert.ok(range.last-range.first+1<=5);}
  const last=pdfVisibleRange(1999000,700,1000,2000);assert.equal(last.current,2000);assert.equal(last.last,2000);
 });
+test('a distant page jump discards obsolete queued downloads instead of blocking the new page',async()=>{
+ const loads:number[]=[];let release!:(value:Blob)=>void;
+ const cache=createPdfPageCache(async p=>{loads.push(p);if(p===1)return new Promise<Blob>(resolve=>{release=resolve});return new Blob([String(p)])},{concurrency:1});
+ const active=cache.get(1),old=assert.rejects(cache.get(2),/superseded/),current=cache.get(2000);
+ cache.keepWindow(1999,2000);assert.equal(cache.stats().queued,1);release(new Blob(['1']));await Promise.all([active,old,current]);assert.deepEqual(loads,[1,2000]);cache.clear();
+});

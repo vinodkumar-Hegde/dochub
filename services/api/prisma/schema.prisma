@@ -42,6 +42,7 @@ model User {
   materialViews MaterialView[]
   appSessions AppSession[]
   notificationReceipts NotificationRecipient[]
+  inboxState InboxState?
   studentCredential StudentCredential?
   studentSessions StudentSession[]
   studentAuthTokens StudentAuthToken[]
@@ -144,6 +145,8 @@ model AuditEvent {
   details     Json
   createdAt   DateTime @default(now())
   @@index([targetId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
 }
 
 model OutboxEvent {
@@ -421,8 +424,10 @@ model Notification {
   sourceId String? @db.Uuid
   attachments NotificationAttachment[]
   recipients NotificationRecipient[]
+  deliveryJob NotificationDeliveryJob?
   @@index([createdAt, id])
   @@index([createdById, createdAt])
+  @@index([kind, sourceId])
 }
 model NotificationRecipient {
   notificationId String @db.Uuid
@@ -507,4 +512,28 @@ model MaterialView {
  document Document @relation(fields:[documentId],references:[id],onDelete:Cascade)
  @@id([userId,documentId])
  @@index([lastOpenedAt])
+}
+
+model WorkspaceRevision {
+ id String @id
+ revision BigInt @default(0)
+}
+model InboxState {
+ userId String @id @db.Uuid
+ revision BigInt @default(0)
+ unreadCount Int @default(0)
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+}
+model NotificationDeliveryJob {
+ notificationId String @id @db.Uuid
+ cursor String? @db.Uuid
+ delivered Int @default(0)
+ expectedRecipients Int?
+ attempts Int @default(0)
+ nextAttemptAt DateTime @default(now())
+ completedAt DateTime?
+ lastError String?
+ createdAt DateTime @default(now())
+ notification Notification @relation(fields:[notificationId],references:[id],onDelete:Cascade)
+ @@index([completedAt,nextAttemptAt])
 }

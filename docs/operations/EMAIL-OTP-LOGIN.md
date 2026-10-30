@@ -10,6 +10,4 @@ The student profile returns named course, programme and plan subscriptions, incl
 
 Endpoints: POST /auth/otp/request, POST /auth/otp/verify, GET /auth/session and POST /auth/logout. The existing /auth/me endpoint returns the same authorized account. Password and Cognito redirect endpoints are not registered by server.ts.
 
-Apply 20261030010000_email_otp_login before restarting the API. SES_FROM_EMAIL must be verified and CORS_ORIGIN must be the actual application origin. Production requires HTTPS. The configured local SES account was checked read-only: sending enabled, production access enabled and sender verified. No authentication email was sent during automated testing; delivery was replaced with an in-memory test adapter.
-
-Verification includes the API unit suite, PostgreSQL integration suite and browser tests of the email/code screens, admin routing, student module launcher, subscriptions, folder dialog and phone/iPad viewport sizes in both orientations. All integration fixtures roll back. Live OTP requests send email only when a user submits the sign-in form.
+Apply all committed migrations before starting the API. Verify `SES_FROM_EMAIL`, set `CORS_ORIGIN` to the actual HTTPS application origin, and run the admin bootstrap job with the chosen `ADMIN_EMAIL`. Follow [AWS setup](AWS-SETUP.md) for SES configuration and [launch checks](LAUNCH-CHECKLIST.md) for login validation.

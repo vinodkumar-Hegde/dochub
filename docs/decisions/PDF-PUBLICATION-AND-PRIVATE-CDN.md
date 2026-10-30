@@ -1,4 +1,4 @@
-# PDF publication and private delivery — 29 October 2026
+# PDF publication and private delivery
 
 ## Decision
 
@@ -22,7 +22,7 @@ CloudFront enforces a signed custom policy for every request, including edge-cac
 
 `infra/terraform/preview-cdn.tf` is disabled by default. It defines a CloudFront distribution, trusted signing key group, signed S3 origin access, preview-prefix-only S3 read permission and distribution-scoped KMS decrypt permission. The original-document prefix is not granted to CloudFront. Signatures are excluded from the cache key; immutable version/page paths share edge-cache entries. Minimum edge TTL is one day to override the existing S3 `private, no-store` metadata, while response headers keep browser responses `private, no-store`. Viewer signature expiry is independent of cached object lifetime. The response policy permits GET/HEAD from the configured frontend origin without browser credentials.
 
-Before apply, inspect existing live bucket/KMS policies and merge any required statements; the new policy resources are authoritative and must not overwrite unrepresented production grants. Review the plan against isolated staging, not the existing development state without review. This task does not apply Terraform, generate a real signing key, change IAM, deploy AWS resources or enable CDN locally.
+Before apply, inspect existing live bucket/KMS policies and merge any required statements; the new policy resources are authoritative and must not overwrite unrepresented production grants. Review the plan against isolated staging, not the existing development state without review.
 
 1. Generate/manage the CloudFront RSA 2048 signing key outside the repository. Supply only its public key file to Terraform; mount the private key read-only from a secret manager into the API. Rotation must overlap trusted public keys for existing grants before retiring old keys.
 2. Set `enable_preview_cdn=true` and `preview_signing_public_key_file` in reviewed staging configuration. Review S3/KMS policy merge, quotas and operational logging. Apply through the approved infrastructure workflow.
@@ -30,14 +30,8 @@ Before apply, inspect existing live bucket/KMS policies and merge any required s
 4. Verify unsigned requests, expired signatures, another version, another origin and original-document URLs fail; verify valid signed GET/CORS, KMS access and warm-cache behavior. Validate cancellation, replacements, revocations and publication/annotation authorization in the real student UI. Enable per the accepted revocation window.
 5. Enable CDN only after those checks. To roll back, remove all three CDN configuration values together and restart the API; new reads use the original authorized stream. To immediately revoke existing grants, remove the trusted signer (operationally disruptive); deleting/invalidating cached images alone is not an access-control substitute. Keep rendered objects and migrations for rollback compatibility. Deploy migrations and regenerate Prisma before API/worker rollout; old workers must finish/stop gracefully and restart on the new code. Existing processes without a watcher do not hot-reload.
 
-## Capacity validation required
+## Deployment validation
 
-80,000 concurrent readers is a target, not a verified capacity claim. For an illustrative workload of one 300 kB page per reader every 20 seconds, delivery is about 4,000 page requests/s and 9.6 Gbit/s before thumbnails, TLS, retries and exports. A 60-second grant means roughly 1,333 renewals/s at steady state, with larger synchronized spikes. Page annotation reads still use the API/database. Simultaneous logins, mutation/annotation traffic and personalized exports need separate capacity budgets, connection pooling and scaling tests; CDN does not solve these automatically.
-
-Staging load gates: ramp 1k → 10k → 40k → 80k independent student sessions using distributed generators and synthetic accounts, with cold/warm caches, popular/dispersed documents, realistic dwell times, thumbnail requests, renewals, revoked users, replacements, annotation writes and recovery scenarios. Record p50/p95/p99, authorization error rates, API CPU/RSS, DB query/connection saturation, CDN hit ratio, S3/KMS request rates, egress, queue age and worker resource limits. Agree numerical SLOs before running; validate AWS quotas and budget first. No 80k run was performed locally.
-
-## Verification and remaining gates
-
-See the delivery report for exact local results. Terraform format/validate and signature cryptography tests are not evidence of deployed S3/KMS/CloudFront correctness. The repository has no configured lint command, browser student E2E and responsive regression remain separate checks, and dependency-audit findings must be resolved before release. No GitHub push is authorized.
+Follow the [launch checklist](../operations/LAUNCH-CHECKLIST.md) for the 80,000-registered / 10,000-active target. Measure page traffic, grant renewals, annotation requests, CDN cache effectiveness and API/database resources with representative documents.
 
 References: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-signed-urls.html ; https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-s3.html

@@ -10,6 +10,7 @@ ARG VITE_API_ORIGIN=/api
 ENV VITE_API_ORIGIN=$VITE_API_ORIGIN
 RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.28-alpine
+COPY --chmod=755 deploy/25-trusted-proxies.sh /docker-entrypoint.d/25-trusted-proxies.sh
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 8080

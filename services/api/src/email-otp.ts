@@ -1,7 +1,7 @@
 import {randomInt,randomBytes,randomUUID,scrypt,timingSafeEqual} from 'node:crypto';
 import {SESv2Client,SendEmailCommand} from '@aws-sdk/client-sesv2';
 import type {FastifyInstance,FastifyRequest,FastifyReply} from 'fastify';
-import type {PrismaClient} from '@prisma/client';
+import type {PrismaClient,UserRole} from '@prisma/client';
 import {z} from 'zod';
 import {AuthError,type Principal} from './auth.js';
 import type {Config} from './config.js';
@@ -49,16 +49,18 @@ export function registerEmailOtp(app:FastifyInstance,db:PrismaClient,cfg:Config,
  const authorize=async(req:FastifyRequest,requireFeatures=true):Promise<Principal>=>{
   if(!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==origin)throw new AuthError(403,'Request origin is not allowed');
   const secret=readSecret(req),now=new Date();if(!secret)throw new AuthError(401,'Sign in to continue');
-  const session=await db.appSession.findUnique({where:{tokenHash:digestSecret(secret)},include:{user:{include:{roles:true}}}});
-  if(!session||session.revokedAt||session.expiresAt<=now||+session.lastSeenAt+IDLE_MS<=+now||normalizeSubscriberEmail(session.user.email??'')!==session.email)throw new AuthError(401,'Your session has expired. Sign in again.');
-  const roles=session.user.roles.map(r=>r.role),studentOnly=roles.length===1&&roles[0]==='STUDENT';
-  if(!roles.length||(!studentOnly&&!session.user.enabled))throw new AuthError(403,'Account unavailable');
-  if(studentOnly&&requireFeatures){
-   const active=await db.enrollment.findFirst({where:{userId:session.userId,activeFrom:{lte:now},OR:[{validUntil:null},{validUntil:{gt:now}}]},select:{userId:true}});
-   if(!session.user.enabled||!active)throw new AuthError(403,'Learning features are locked. Your profile remains available.');
-  }
+  // One indexed query; still recheck revocation, roles and expiry on every request.
+  const [session]=await db.$queryRaw<Array<{id:string;userId:string;email:string;userEmail:string|null;displayName:string|null;enabled:boolean;roles:UserRole[];revokedAt:Date|null;expiresAt:Date;lastSeenAt:Date;active:boolean}>>`
+   SELECT s.id,s."userId",s.email,s."revokedAt",s."expiresAt",s."lastSeenAt",u.email "userEmail",u."displayName",u.enabled,
+    ARRAY(SELECT r.role::text FROM "UserProfile" r WHERE r."userId"=u.id) roles,
+    (${!requireFeatures} OR EXISTS(SELECT 1 FROM "Enrollment" e WHERE e."userId"=u.id AND e."activeFrom"<=${now} AND (e."validUntil" IS NULL OR e."validUntil">${now}))) active
+   FROM "AppSession" s JOIN "User" u ON u.id=s."userId" WHERE s."tokenHash"=${digestSecret(secret)}`;
+  if(!session||session.revokedAt||session.expiresAt<=now||+session.lastSeenAt+IDLE_MS<=+now||normalizeSubscriberEmail(session.userEmail??'')!==session.email)throw new AuthError(401,'Your session has expired. Sign in again.');
+  const roles=session.roles,studentOnly=roles.length===1&&roles[0]==='STUDENT';
+  if(!roles.length||(!studentOnly&&!session.enabled))throw new AuthError(403,'Account unavailable');
+  if(studentOnly&&requireFeatures&&(!session.enabled||!session.active))throw new AuthError(403,'Learning features are locked. Your profile remains available.');
   if(+session.lastSeenAt<+now-5*60_000)await db.appSession.updateMany({where:{id:session.id,revokedAt:null},data:{lastSeenAt:now}});
-  return {userId:session.userId,roles,displayName:session.user.displayName};
+  return {userId:session.userId,roles,displayName:session.displayName};
  };
  app.post('/auth/otp/request',async(req,reply)=>{
   originGuard(req);const {email}=z.object({email:emailSchema}).strict().parse(req.body);

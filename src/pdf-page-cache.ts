@@ -23,6 +23,10 @@ export function createPdfPageCache(load:(page:number)=>Promise<Blob>,options:{ma
    const promise=new Promise<Blob>((resolve,reject)=>queue.push({page,resolve,reject}));pending.set(page,promise);pump();return promise;
   },
   prefetch(page:number){if(page>=1)void this.get(page).catch(()=>{})},
+  keepWindow(first:number,last:number){
+   // Drop obsolete queued work after a fast jump; at most existing active loads finish.
+   for(let i=queue.length-1;i>=0;i--){const job=queue[i]!;if(job.page<first||job.page>last){queue.splice(i,1);pending.delete(job.page);job.reject(new Error('Page request superseded by navigation'))}}
+  },
   clear(){disposed=true;entries.clear();pending.clear();bytes=0;for(const job of queue.splice(0))job.reject(new Error('Reader closed'));},
   stats(){return {pages:entries.size,bytes,active,queued:queue.length}},
  };
