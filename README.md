@@ -2,7 +2,7 @@
 
 React/TypeScript learning workspace with a Fastify API, PostgreSQL/Prisma, email OTP authentication, private S3 storage and an SQS PDF worker.
 
-Start with [the DevOps handoff](docs/operations/DEVOPS-HANDOFF.md) for Docker commands, environment variables, AWS prerequisites, migrations, admin creation, endpoints, deployment and rollback. [Review results](docs/verification/CODE-REVIEW.md) distinguish automated checks from deployment checks.
+Start with [the DevOps handoff](docs/operations/DEVOPS-HANDOFF.md) for Docker commands, environment variables, AWS prerequisites, migrations, admin creation, endpoints, deployment and rollback. See the [documentation index](docs/README.md) for service runbooks and launch checks.
 
 ## Local development
 

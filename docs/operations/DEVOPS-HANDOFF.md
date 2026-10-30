@@ -1,8 +1,8 @@
 # DocHub DevOps handoff
 
-## Capacity target and current release limit
+## Deployment scope
 
-The target is 80,000 registered students and up to 10,000 simultaneously active. The [capacity fixes](../verification/CAPACITY-FIXES.md) resolve the reproduced analytics failure, bound notification fanout and replace repeated full-content polling with scoped change checks. Local synthetic checks passed, including a 30-second heartbeat-only HTTP probe. Full mixed-workload staging capacity is **not validated**; complete the deployment/load-test gates in that report before production approval.
+Plan infrastructure for 80,000 registered students and a peak of 10,000 simultaneously active users. Use the [launch checklist](LAUNCH-CHECKLIST.md) to validate the deployed environment and size API replicas, database connections, PDF workers and private CDN delivery.
 
 ## Which environment file to use
 
@@ -67,7 +67,7 @@ Workload IAM roles must be reachable from the containers. For a local-only crede
 
 On a fresh volume, `deploy/init-db.sh` creates a runtime role without superuser, database creation or role administration privileges. Migrations use the owner; API/worker/admin use the runtime role. Compose passes only selected runtime variables into these containers, excluding the migration owner password. For an existing database, have the DBA create the runtime role and grant CRUD on existing tables/sequence usage plus owner default privileges before switching runtime credentials. Init scripts do not rerun on existing volumes. Changing env passwords does not rotate existing PostgreSQL roles; perform a coordinated database password rotation.
 
-The named `postgres-data` volume persists data. Never use `docker compose down -v` against an environment you need. Workers need temporary disk for the input PDF and bounded render batches; size storage for concurrent uploads above `MAX_PDF_BYTES`. Start with at least 4 GiB worker memory and measure representative image-heavy PDFs before setting resource limits or increasing concurrency. The baseline is not a managed HA database deployment.
+The named `postgres-data` volume persists data. Never use `docker compose down -v` against an environment you need. Workers need temporary disk for the input PDF and bounded render batches; size storage for concurrent uploads above `MAX_PDF_BYTES`. Start with at least 4 GiB worker memory and measure representative image-heavy PDFs before setting resource limits or increasing concurrency. Use managed PostgreSQL with failover for a highly available deployment.
 
 ## Capacity migrations and notification worker
 
@@ -176,14 +176,20 @@ Use `feature/*` → reviewed PR into `dev` → staging verification → release 
 
 Build and tag immutable images by commit SHA in your registry. Back up DB; run the migration job once; deploy worker/API/web with the same release; check readiness, OTP delivery, permissions, a real PDF upload/publication, student display and notification views. Fresh installations use committed SQL migrations; existing installs use `prisma migrate deploy`. Never use `db push`, `migrate reset` or development seeds in production. If an existing database was created without migration history, baseline it only after comparing its schema and reviewing a backup; do not mark migrations applied blindly.
 
-Rollback application images to the last compatible SHA. Prisma deploy does not reverse schema/data migrations. Use forward fixes or a reviewed restore/rollback plan. Prefer additive schema changes and keep old application compatibility until release verification completes. Document manual AWS changes separately. The synthetic PDF benchmark is not a substitute for end-to-end testing with real S3/SQS/SES and representative PDFs in staging.
+Rollback application images to the last compatible SHA. Prisma deploy does not reverse schema/data migrations. Use forward fixes or a reviewed restore/rollback plan. Prefer additive schema changes and keep old application compatibility until release verification completes. Document manual AWS changes separately. Run end-to-end checks with S3/SQS/SES and representative PDFs in staging.
 
 ## Local Docker troubleshooting
 
 If Docker reports exhausted default address pools, select an unused subnet in a local Compose network override or adjust Docker address pools. Do not delete networks belonging to other projects. This is host configuration, not an application dependency.
 
-## Repository
+## Repository and CI configuration
 
-Private repository: https://github.com/vinodkumar-Hegde/dochub. Default branch: `dev`; release branch: `prod`. The initial branch-protection API requests were rejected because this account requires GitHub Pro for private-repository protection. Upgrade the account or move to an organization plan that supports it, then enable the PR/check/review policies described above. Keep the repository private. The Verify workflow also supports manual runs from the Actions tab.
+Private repository: https://github.com/vinodkumar-Hegde/dochub. Default branch: `dev`; release branch: `prod`. Keep the repository private. Use a GitHub plan supporting private-repository branch protection and enable the PR/check/review policies above. Configure Actions billing/spending allowance or an approved runner so both Verify jobs can execute.
 
-The first manually dispatched hosted CI run did not execute any steps: GitHub reported failed account payments or an insufficient spending limit. Resolve GitHub Billing & plans (or supply an approved runner), then re-run `gh workflow run ci.yml --repo vinodkumar-Hegde/dochub --ref dev` and verify both jobs pass before release. Local verification evidence is in `../verification/CODE-REVIEW.md`; it is not a hosted CI pass.
+Run the workflow from the Actions tab or with:
+
+```sh
+gh workflow run ci.yml --repo vinodkumar-Hegde/dochub --ref dev
+```
+
+Confirm both `tests` and `containers` jobs succeed for the release commit.
