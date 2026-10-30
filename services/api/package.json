@@ -11,7 +11,8 @@
     "test": "node --import tsx --test src/*.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "test:integration": "node --env-file=.env --import tsx --test tests/*.integration.ts"
+    "test:integration": "node --env-file=.env --import tsx --test tests/*.integration.ts",
+    "notifications:worker": "tsx src/notification-worker.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.800.0",

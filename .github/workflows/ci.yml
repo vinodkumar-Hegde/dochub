@@ -83,8 +83,9 @@ jobs:
           docker compose run --rm migrate
           docker compose run --rm admin
           docker compose run --rm admin
-          docker compose up -d api web
+          docker compose up -d api notification-worker web
           curl --fail --retry 12 --retry-delay 2 --retry-connrefused http://localhost:8080/api/health/ready
+          docker compose exec -T -e CAPACITY_SMOKE=1 api node --input-type=module < scripts/check-notification-worker.mjs
           docker compose exec -T api node --input-type=module -e 'import {PrismaClient} from "@prisma/client"; const db=new PrismaClient(); const [role]=await db.$queryRaw`SELECT rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=current_user`; if(role.rolsuper||role.rolcreatedb||role.rolcreaterole||process.env.POSTGRES_PASSWORD)process.exit(1); await db.$disconnect();'
       - name: Container logs
         if: failure()

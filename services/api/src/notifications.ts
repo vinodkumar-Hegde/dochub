@@ -4,7 +4,7 @@ import type {FastifyInstance,FastifyRequest} from 'fastify';
 import {Prisma,type PrismaClient} from '@prisma/client';
 import {z} from 'zod';
 import {assertRole,AuthError,type Principal} from './auth.js';
-import {notificationAudience,publishNotification} from './notification-delivery.js';
+import {notificationAudienceCount,publishNotification} from './notification-delivery.js';
 const uuid=z.string().uuid();
 const target=z.object({courseIds:z.array(uuid).max(100).default([]),programmeIds:z.array(uuid).max(100).default([]),planIds:z.array(uuid).max(100).default([])}).strict().refine(v=>v.courseIds.length+v.programmeIds.length+v.planIds.length>0,'Select a course, programme or plan');
 const attachment=z.object({name:z.string().trim().min(1).max(180),mimeType:z.string().max(150),base64:z.string().max(7_000_000)}).strict();
@@ -13,6 +13,7 @@ const page=z.object({page:z.coerce.number().int().min(1).max(10000).default(1),k
 const params=z.object({id:uuid});
 const fileMeta={id:true,name:true,mimeType:true,size:true} as const;
 const metadata={id:true,kind:true,title:true,body:true,createdAt:true,courseIds:true,programmeIds:true,planIds:true,sourceId:true,attachments:{select:fileMeta}} as const;
+const adminMetadata={...metadata,deliveryJob:{select:{delivered:true,expectedRecipients:true,completedAt:true,lastError:true}}} as const;
 function decodeFile(file:z.infer<typeof attachment>){
  if(!/^[A-Za-z0-9+/]*={0,2}$/.test(file.base64)||file.base64.length%4!==0)throw new AuthError(422,'Invalid attachment encoding');
  const data=Buffer.from(file.base64,'base64');
@@ -51,9 +52,10 @@ export function registerNotifications(app:FastifyInstance,db:PrismaClient,authen
  app.post('/v1/admin/notifications/sync-publications',async req=>{
   const p=await admin(req);
   return sendTransaction(db,async tx=>{
-   const previous=await tx.notification.findMany({where:{kind:{in:['MATERIAL','SESSION']}},select:{kind:true,sourceId:true}});
-   const documents=await tx.document.findMany({where:{...owner(p),state:'PUBLISHED',hidden:false,locked:false,id:{notIn:previous.filter(n=>n.kind==='MATERIAL'&&n.sourceId).map(n=>n.sourceId!)},OR:[{folderId:null},{folder:{hidden:false,locked:false}}]},include:{grants:true,versions:{where:{state:'PUBLISHED'},orderBy:{number:'desc'},take:1}},orderBy:[{publishedAt:'desc'},{id:'asc'}],take:51});
-   const sessions=await tx.liveSession.findMany({where:{...owner(p),publishedAt:{not:null},status:{not:'DRAFT'},id:{notIn:previous.filter(n=>n.kind==='SESSION'&&n.sourceId).map(n=>n.sourceId!)}},include:{plans:true},orderBy:[{publishedAt:'desc'},{id:'asc'}],take:51});
+   const documentIds=await tx.$queryRaw<Array<{id:string}>>`SELECT d.id FROM "Document" d WHERE d.state='PUBLISHED' AND NOT d.hidden AND NOT d.locked AND (${p.roles.includes('SUPER_ADMIN')} OR d."createdById"=${p.userId}::uuid) AND (d."folderId" IS NULL OR EXISTS(SELECT 1 FROM "DocumentFolder" f WHERE f.id=d."folderId" AND NOT f.hidden AND NOT f.locked)) AND NOT EXISTS(SELECT 1 FROM "Notification" n WHERE n.kind='MATERIAL' AND n."sourceId"=d.id) ORDER BY d."publishedAt" DESC,d.id LIMIT 51`;
+   const sessionIds=await tx.$queryRaw<Array<{id:string}>>`SELECT s.id FROM "LiveSession" s WHERE s."publishedAt" IS NOT NULL AND s.status<>'DRAFT' AND (${p.roles.includes('SUPER_ADMIN')} OR s."createdById"=${p.userId}::uuid) AND NOT EXISTS(SELECT 1 FROM "Notification" n WHERE n.kind='SESSION' AND n."sourceId"=s.id) ORDER BY s."publishedAt" DESC,s.id LIMIT 51`;
+   const documents=await tx.document.findMany({where:{id:{in:documentIds.map(d=>d.id)}},include:{grants:true,versions:{where:{state:'PUBLISHED'},orderBy:{number:'desc'},take:1}},orderBy:[{publishedAt:'desc'},{id:'asc'}]});
+   const sessions=await tx.liveSession.findMany({where:{id:{in:sessionIds.map(s=>s.id)}},include:{plans:true},orderBy:[{publishedAt:'desc'},{id:'asc'}]});
    let created=0;
    for(const d of documents.slice(0,50)){
     const version=d.versions[0];if(!version)continue;
@@ -68,7 +70,7 @@ export function registerNotifications(app:FastifyInstance,db:PrismaClient,authen
  });
  app.post('/v1/admin/notifications/audience',async req=>{
   await admin(req);const t=target.parse(req.body);
-  return db.$transaction(async tx=>{await validateTarget(tx,t);return {count:(await notificationAudience(tx,t)).length};});
+  return db.$transaction(async tx=>{await validateTarget(tx,t);return {count:await notificationAudienceCount(tx,t)};});
  });
  app.post('/v1/admin/notifications',{bodyLimit:15*1024*1024},async(req,reply)=>{
   const p=await admin(req),input=compose.parse(req.body),files=input.attachments.map(decodeFile);
@@ -76,33 +78,33 @@ export function registerNotifications(app:FastifyInstance,db:PrismaClient,authen
   for(const file of files)await scan(file.data);
   const result=await sendTransaction(db,async tx=>{
    const eventKey=`custom:${p.userId}:${input.requestId}`;
-   const previous=await tx.notification.findUnique({where:{eventKey},include:{_count:{select:{recipients:true}}}});
-   if(previous)return {id:previous.id,recipients:previous._count.recipients};
-   await validateTarget(tx,input.target);const audience=await notificationAudience(tx,input.target);
-   if(!audience.length)throw new AuthError(422,'No active eligible students match this audience');
-   const n=await tx.notification.create({data:{kind:'CUSTOM',title:input.title,body:input.body,createdById:p.userId,eventKey,...input.target,attachments:{create:files},recipients:{create:audience.map(userId=>({userId}))}}});
-   await tx.auditEvent.create({data:{actorId:p.userId,targetId:n.id,action:'NOTIFICATION_SENT',details:{recipients:audience.length,attachments:files.length}}});
-   return {id:n.id,recipients:audience.length};
+   const previous=await tx.notification.findUnique({where:{eventKey},include:{_count:{select:{recipients:true}},deliveryJob:true}});
+   if(previous){const queued=!!previous.deliveryJob&&!previous.deliveryJob.completedAt;return {id:previous.id,recipients:queued?previous.deliveryJob?.expectedRecipients??previous._count.recipients:previous._count.recipients,queued};}
+   await validateTarget(tx,input.target);const audience=await notificationAudienceCount(tx,input.target);
+   if(!audience)throw new AuthError(422,'No active eligible students match this audience');
+   const n=await tx.notification.create({data:{kind:'CUSTOM',title:input.title,body:input.body,createdById:p.userId,eventKey,...input.target,attachments:{create:files},deliveryJob:{create:{expectedRecipients:audience}}}});
+   await tx.auditEvent.create({data:{actorId:p.userId,targetId:n.id,action:'NOTIFICATION_SENT',details:{recipients:audience,attachments:files.length}}});
+   return {id:n.id,recipients:audience,queued:true};
   });
   return reply.code(201).send(result);
  });
  app.get('/v1/admin/notifications',async req=>{
   const p=await admin(req),q=page.parse(req.query);
   const where:Prisma.NotificationWhereInput={...owner(p),...(q.kind==='CUSTOM'?{kind:'CUSTOM'}:q.kind==='REGULAR'?{kind:{in:['MATERIAL','SESSION']}}:{}),...(q.q?{OR:[{title:{contains:q.q,mode:'insensitive'}},{body:{contains:q.q,mode:'insensitive'}}]}:{})};
-  const [items,total]=await Promise.all([db.notification.findMany({where,select:{...metadata,_count:{select:{recipients:true}}},orderBy:[{createdAt:'desc'},{id:'desc'}],skip:(q.page-1)*30,take:30}),db.notification.count({where})]);
+  const [items,total]=await Promise.all([db.notification.findMany({where,select:{...adminMetadata,_count:{select:{recipients:true}}},orderBy:[{createdAt:'desc'},{id:'desc'}],skip:(q.page-1)*30,take:30}),db.notification.count({where})]);
   const counts=await db.notificationRecipient.groupBy({by:['notificationId'],where:{notificationId:{in:items.map(n=>n.id)},readAt:{not:null}},_count:{_all:true}});
   const viewed=new Map(counts.map(row=>[row.notificationId,row._count._all]));
   return {items:items.map(({_count,...n})=>({...n,recipients:_count.recipients,viewers:viewed.get(n.id)??0})),total,nextPage:q.page*30<total?q.page+1:null};
  });
  app.get('/v1/admin/notifications/:id',async req=>{
   const p=await admin(req),{id}=params.parse(req.params);const q=page.parse(req.query);
-  const n=await db.notification.findFirst({where:{id,...owner(p)},select:{...metadata,_count:{select:{recipients:true}}}});
+  const n=await db.notification.findFirst({where:{id,...owner(p)},select:{...adminMetadata,_count:{select:{recipients:true}}}});
   if(!n)throw new AuthError(404,'Notification not found');
   const [viewers,people]=await Promise.all([db.notificationRecipient.count({where:{notificationId:id,readAt:{not:null}}}),db.notificationRecipient.findMany({where:{notificationId:id,readAt:{not:null}},select:{readAt:true,user:{select:{id:true,displayName:true,email:true}}},orderBy:[{readAt:'desc'},{userId:'asc'}],skip:(q.page-1)*30,take:30})]);
   return {...n,recipients:n._count.recipients,viewers,people,nextPage:q.page*30<viewers?q.page+1:null};
  });
  app.get('/v1/student/notifications/unread',async req=>{
-  const p=await student(req);return {count:await db.notificationRecipient.count({where:{userId:p.userId,readAt:null}})};
+  const p=await student(req);return {count:(await db.inboxState.findUnique({where:{userId:p.userId},select:{unreadCount:true}}))?.unreadCount??0};
  });
  app.get('/v1/student/notifications',async req=>{
   const p=await student(req),q=page.parse(req.query);

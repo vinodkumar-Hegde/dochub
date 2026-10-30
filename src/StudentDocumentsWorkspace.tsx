@@ -1,3 +1,4 @@
+import {useWorkspaceChanges,refreshWorkspaceChanges} from './workspace-changes';
 import {todaySessionAlerts} from './student-session-alerts';
 import {NotificationsWorkspace} from './NotificationsWorkspace';
 import {notificationsClient} from './notifications-client';
@@ -23,8 +24,8 @@ function readPins(): string[] {
 
 export default function StudentDocumentsWorkspace({ onSwitchProfile, studentName = 'Student', initialView = 'Home' }: { onSwitchProfile?: () => void; studentName?: string; initialView?: 'Home' | 'Learning' }) {
   const [unreadCount,setUnreadCount]=useState(0);
-  const refreshUnread=useCallback(()=>{void notificationsClient.unread().then(result=>setUnreadCount(result.count)).catch(()=>setUnreadCount(0))},[]);
-  useEffect(()=>{refreshUnread();const timer=setInterval(refreshUnread,5000);return()=>clearInterval(timer)},[refreshUnread]);
+  const refreshUnread=useCallback(()=>{refreshWorkspaceChanges();void notificationsClient.unread().then(result=>setUnreadCount(result.count)).catch(()=>setUnreadCount(0))},[]);
+
   const [view, setView] = useState<'Home' | StudentModule>(initialView);
   const [catalogue, setCatalogue] = useState<StudentCatalogue>({ programmes: [] });
   const [documents, setDocuments] = useState<StudentMaterial[]>([]);
@@ -57,7 +58,8 @@ export default function StudentDocumentsWorkspace({ onSwitchProfile, studentName
         setTodaySessions(todaySessionAlerts(items));setAlertTime(Date.now());
       }catch{if(alive&&request===sequence)setTodaySessions([]);}
     };
-    void refresh();const timer=setInterval(()=>void refresh(),60000);
+    let day=new Date().toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata'});
+    void refresh();const timer=setInterval(()=>{setAlertTime(Date.now());const next=new Date().toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata'});if(next!==day){day=next;void refresh()}},60000);
     const focus=()=>void refresh();window.addEventListener('focus',focus);
     return()=>{alive=false;sequence++;clearInterval(timer);window.removeEventListener('focus',focus)};
   },[sessionsRefresh]);
@@ -65,11 +67,11 @@ export default function StudentDocumentsWorkspace({ onSwitchProfile, studentName
   const [sessionError,setSessionError]=useState('');
   const [sessionLoading,setSessionLoading]=useState(false);
   const [pins, setPins] = useState<string[]>(readPins);
-  const loadSequence = useRef(0),inFlight=useRef(0),loadedCount=useRef(0),previewRef=useRef(preview),moreRef=useRef(moreBusy);
+  const alive=useRef(true),loadSequence = useRef(0),inFlight=useRef(0),pendingRefresh=useRef(false),loadedCount=useRef(0),previewRef=useRef(preview),moreRef=useRef(moreBusy);
   loadedCount.current=documents.length;previewRef.current=preview;moreRef.current=moreBusy;
 
-  const load = useCallback(async (background=false) => {
-    if(background&&(inFlight.current||moreRef.current))return;inFlight.current++;
+  const load = useCallback(async (background=false):Promise<void> => {
+    if(background&&(inFlight.current||moreRef.current)){pendingRefresh.current=true;return;}inFlight.current++;
     const sequence=++loadSequence.current;
     if(!background)setLoading(true); setError('');
     try {
@@ -87,21 +89,22 @@ export default function StudentDocumentsWorkspace({ onSwitchProfile, studentName
       // Never retain old course names or material titles when revalidation fails.
       setCatalogue({programmes:[]}); setDocuments([]); setCursor(null); setPreview(null);
       setError(cause instanceof Error ? cause.message : 'Unable to load your learning materials');
-    } finally {inFlight.current--;if(sequence===loadSequence.current&&!background)setLoading(false); }
+    } finally {inFlight.current--;if(sequence===loadSequence.current&&!background)setLoading(false);if(alive.current&&!inFlight.current&&pendingRefresh.current){pendingRefresh.current=false;void load(true)} }
   }, []);
-  useEffect(() => { void load(); return()=>{loadSequence.current++}; }, [load]);
+  useEffect(() => { alive.current=true;void load(); return()=>{alive.current=false;pendingRefresh.current=false;loadSequence.current++}; }, [load]);
   useEffect(()=>{
     const refresh=()=>{if(document.visibilityState==='visible')void load(true)};
-    const timer=setInterval(refresh,5000);
+
     window.addEventListener('focus',refresh);
     window.addEventListener('pageshow',refresh);
     document.addEventListener('visibilitychange',refresh);
     return()=>{
-      clearInterval(timer);window.removeEventListener('focus',refresh);
+      window.removeEventListener('focus',refresh);
       window.removeEventListener('pageshow',refresh);
       document.removeEventListener('visibilitychange',refresh);
     };
   },[load]);
+  useWorkspaceChanges(change=>{setUnreadCount(change.unreadCount);if(change.contentChanged){void load(true);setSessionsRefresh(n=>n+1)}});
   const loadMore = async () => {
     if (!cursor || moreBusy) return;
     setMoreBusy(true);
@@ -111,7 +114,7 @@ export default function StudentDocumentsWorkspace({ onSwitchProfile, studentName
       if(sequence!==loadSequence.current)return;
       setDocuments(previous => [...previous, ...page.items]); setCursor(page.nextCursor);
     } catch (cause) { if(sequence===loadSequence.current)setError(cause instanceof Error ? cause.message : 'Unable to load more materials'); }
-    finally { setMoreBusy(false); }
+    finally { setMoreBusy(false);moreRef.current=false;if(alive.current&&pendingRefresh.current){pendingRefresh.current=false;void load(true)} }
   };
   useEffect(()=>{
     if(view!=='Sessions')return;

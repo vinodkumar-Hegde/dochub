@@ -21,6 +21,6 @@ node --env-file=.env --import tsx src/bootstrap-admin.ts
 node --env-file=.env --import tsx src/server.ts
 ```
 
-In another terminal, run `npm run dev` from the repository root. Run the PDF worker separately with `node --env-file=.env --import tsx src/worker.ts` from `services/api`; it needs Poppler and current ClamAV signatures. Docker provides those system dependencies. Application login is email + OTP for all roles; no password, default admin or legacy Cognito setup is required.
+In another terminal, run `npm run dev` from the repository root. Start the notification worker separately with `node --env-file=.env --import tsx src/notification-worker.ts` from `services/api`; it delivers queued in-app notifications. Run the PDF worker separately with `node --env-file=.env --import tsx src/worker.ts` from `services/api`; it needs Poppler and current ClamAV signatures. Docker provides those system dependencies. Application login is email + OTP for all roles; no password, default admin or legacy Cognito setup is required.
 
 Do not commit real environment files, credentials, database backups, Terraform state or signing keys. `VITE_*` values are public browser configuration.

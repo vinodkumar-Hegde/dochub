@@ -1,3 +1,4 @@
+import {registerWorkspaceChanges} from './workspace-changes.js';
 import {registerGlobalSearch} from './global-search.js';
 import {registerWorkspaceControls,withModulePermissions} from './workspace-controls.js';
 import Fastify from 'fastify';
@@ -46,6 +47,7 @@ registerSubscribers(app, db, cfg, authenticate);
 registerFolders(app, db, s3, cfg, authenticate);
 registerSessions(app, db, authenticate);
 registerNotifications(app,db,authenticate);
+registerWorkspaceChanges(app,db,authenticate);
 registerWorkspaceControls(app,db,authenticate);
 registerGlobalSearch(app,db,authenticate);
 const interval = setInterval(() => dispatchOutbox(db, sqs, cfg).catch(err => app.log.error({ err }, 'Outbox dispatch failed')), 5000);

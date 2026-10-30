@@ -1,6 +1,8 @@
 # Capacity review: 80,000 registered / 10,000 active
 
-**Decision: the current application is not approved for 10,000 simultaneous active users.** The target is 80,000 registered students with a peak of 10,000 active at once. This review found a reproducible analytics failure and substantial scaling risks. Functional tests and the previous large-PDF benchmark did not establish this capacity.
+**Baseline decision (before the fixes below): the application was not approved for 10,000 simultaneous active users.** The target is 80,000 registered students with a peak of 10,000 active at once. This review found a reproducible analytics failure and substantial scaling risks. Functional tests and the previous large-PDF benchmark did not establish this capacity.
+
+Subsequent fixes and current measurements: [CAPACITY-FIXES.md](CAPACITY-FIXES.md). The findings below describe the original baseline, not unresolved claims about the updated code.
 
 Baseline reviewed: `f54910d8166c712ab88f4aa0c511522af62dd4fa`. Application code was not changed by this assessment. Evidence: [local probe results](capacity-local-results.json).
 
@@ -93,7 +95,7 @@ node --import ./services/api/node_modules/tsx/dist/loader.mjs services/api/scrip
 node --import ./services/api/node_modules/tsx/dist/loader.mjs services/api/scripts/check-capacity.mts reads
 node --import ./services/api/node_modules/tsx/dist/loader.mjs services/api/scripts/check-capacity.mts fanout
 node --import ./services/api/node_modules/tsx/dist/loader.mjs services/api/scripts/check-capacity.mts analytics
-# analytics currently exits non-zero because the probe reproduces HTTP 500.
+# On the updated code analytics must pass; baseline commit 55fa19f reproduced HTTP 500.
 # Remove only this disposable fixture after inspection:
 docker rm -f dochub-capacity-postgres
 ```

@@ -2,7 +2,7 @@
 
 ## Capacity target and current release limit
 
-The requested target is 80,000 registered students and up to 10,000 simultaneously active. This capacity is **not validated**. The [capacity review](../verification/CAPACITY-80000.md) reproduces an analytics failure on an 80,000-student fixture and lists required polling, fanout and infrastructure work. Treat this handoff as staging/setup work, not approval for production at that load.
+The target is 80,000 registered students and up to 10,000 simultaneously active. The [capacity fixes](../verification/CAPACITY-FIXES.md) resolve the reproduced analytics failure, bound notification fanout and replace repeated full-content polling with scoped change checks. Local synthetic checks passed, including a 30-second heartbeat-only HTTP probe. Full mixed-workload staging capacity is **not validated**; complete the deployment/load-test gates in that report before production approval.
 
 ## Which environment file to use
 
@@ -20,6 +20,7 @@ The root file configures the browser only. Configure S3, SES, SQS and database s
 |---|---|---|
 | web | root Dockerfile / nginx:8080 | Static UI and same-origin `/api` gateway |
 | api | `node dist/server.js` | OTP, users, permissions, uploads, notifications, analytics |
+| notification-worker | `node dist/notification-worker.js` | Durable, batched in-app notification delivery |
 | worker | `node dist/worker.js` | SQS, malware scan, PDF validation and protected page rendering |
 | db | PostgreSQL 16 | Application state and durable outbox |
 | migrate | `npx prisma migrate deploy` | Explicit release migration job |
@@ -52,7 +53,7 @@ docker compose --env-file deploy/.env up -d db
 docker compose --env-file deploy/.env run --rm migrate
 docker compose --env-file deploy/.env run --rm av-update
 docker compose --env-file deploy/.env run --rm admin
-docker compose --env-file deploy/.env up -d api worker web
+docker compose --env-file deploy/.env up -d api worker notification-worker web
 docker compose --env-file deploy/.env ps
 curl --fail http://localhost:8080/health/web
 curl --fail http://localhost:8080/api/health/ready
@@ -68,6 +69,23 @@ On a fresh volume, `deploy/init-db.sh` creates a runtime role without superuser,
 
 The named `postgres-data` volume persists data. Never use `docker compose down -v` against an environment you need. Workers need temporary disk for the input PDF and bounded render batches; size storage for concurrent uploads above `MAX_PDF_BYTES`. Start with at least 4 GiB worker memory and measure representative image-heavy PDFs before setting resource limits or increasing concurrency. The baseline is not a managed HA database deployment.
 
+## Capacity migrations and notification worker
+
+Apply all committed migrations before starting the new API and notification worker. The capacity migrations add analytics indexes, the durable notification job table, per-user unread counters and scoped revision triggers. Existing receipts are backfilled into counters. Schedule an appropriate migration window for index creation/backfill on a large database; do not edit or skip migrations. A fresh installation runs them in order automatically.
+
+Start `notification-worker` with every deployment. Publishing or sending a notification persists its delivery job atomically; recipients are inserted in batches of at most 1,000. The administrator sees Sending/Delivery complete/Retry pending. Do not describe queued messages as already delivered. The worker needs only runtime database access; it does not require S3, SES or ClamAV. Multiple workers can safely claim different jobs through row locks and SKIP LOCKED. Preserve the cursor when retrying failed jobs.
+
+The worker retries failed batches after 30 seconds and resumes after restart. Monitor unfinished-job age, attempts, lastError and completion; alert on a growing/stale backlog. API readiness does not establish notification-worker health. Use `docker compose --env-file deploy/.env logs --tail=100 notification-worker` to inspect startup and failures.
+
+For development outside Docker, start `node --env-file=.env --import tsx src/notification-worker.ts` from `services/api` alongside the API and PDF worker. No public notification-worker HTTP endpoint is exposed.
+
+## Client IPs behind the HTTPS ingress
+
+Set `TRUSTED_PROXY_CIDRS` in `deploy/.env` to the space-separated source CIDRs of the actual load balancer/host proxy as observed by the web container (for example, a dedicated ingress subnet or a single `/32` address). The default is empty: forwarded IP headers are ignored. Never use `/0`, a public client network, or an unrelated shared network. Restrict direct web access to the ingress, and configure that ingress to overwrite or safely append the actual client IP in `X-Forwarded-For`. Nginx resolves the address only from trusted peers, then overwrites the header sent to the private API; keep `TRUST_PROXY_HOPS=1` for this topology. If your topology changes, review the whole trust chain.
+
+Without this configuration, OTP per-IP limits may group all students behind the proxy. Verify two independent client addresses in nginx access logs and verify a client-supplied forged forwarding header cannot change the resolved address. Shared campus/NAT users can legitimately share an IP: include that case in staging login-burst tests; do not disable rate limiting to hide a proxy error. Recreate the web service after changing the setting.
+
+
 ## Configuration
 
 | Variable | Required / meaning |
@@ -81,8 +99,10 @@ The named `postgres-data` volume persists data. Never use `docker compose down -
 | `SES_FROM_EMAIL` | Verified SES sender; login delivery fails closed if unavailable. |
 | `ADMIN_EMAIL`, `ADMIN_NAME` | Admin bootstrap job only. |
 | `PORT` | API listener, 3001 in Compose; not publicly exposed. |
+| `TRUSTED_PROXY_CIDRS` | Web gateway only: explicit ingress CIDRs, space-separated; default empty. Configure the trusted client-IP chain before production OTP traffic. |
 | `TRUST_PROXY_HOPS` | 0 direct API, 1 behind the provided gateway which overwrites X-Forwarded-For. Never expose a trusting API directly. Compose sets 1. |
 | `MAX_PDF_BYTES` | Default 10 GiB; worker storage and infrastructure must match. |
+| `NOTIFICATION_BATCH_SIZE` | Notification worker batch size, 1–1,000; default 1,000. Reduce if database latency requires smaller transactions. |
 | `PDF_RENDER_CONCURRENCY`, `PDF_UPLOAD_CONCURRENCY` | Each 1–4, default 2. Bound worker CPU/memory/network. |
 | `PDF_VERIFICATION_POLICY` | Default clamav-poppler-v1; bump deliberately to invalidate reuse of old verification. |
 | `PREVIEW_CDN_ORIGIN`, `PREVIEW_CDN_KEY_PAIR_ID`, `PREVIEW_CDN_PRIVATE_KEY_FILE` | Optional all-or-none CDN configuration; file mounted, never baked into image. |
@@ -106,13 +126,14 @@ Public gateway prefixes the API with `/api`. API internal paths:
 | `/v1/documents/*`, `/v1/folders/*` | Upload lifecycle, permissions, previews and study annotations. |
 | `/v1/student/catalogue`, `/v1/student/materials`, `/v1/student/sessions` | Entitled student content. |
 | `/v1/admin/notifications`, `/v1/student/notifications` | Custom/automatic notifications and views. |
+| GET `/v1/changes` | Authenticated scoped content/inbox versions and unread count; no learning-data payload. |
 | `/v1/admin/analytics`, `/v1/admin/employees`, `/v1/admin/watermark` | Administrative controls. |
 | `/v1/admin/subscribers/*`, `/v1/admin/sessions/*`, `/v1/search` | Users, live sessions and global search. |
 
 See route registrations in `services/api/src/server.ts` and corresponding modules for exact verbs/payloads. Protected routes require HttpOnly session cookies and role/module/entitlement checks. Two active devices allowed; third rejected. Session idle timeout is 30 minutes, absolute lifetime 12 hours. OTP expires in ten minutes with attempt/rate limits.
 
 ```sh
-docker compose --env-file deploy/.env logs --tail=100 api worker
+docker compose --env-file deploy/.env logs --tail=100 api worker notification-worker
 docker compose --env-file deploy/.env run --rm migrate npx prisma migrate status
 docker compose --env-file deploy/.env exec api node dist/prune-auth.js
 docker compose --env-file deploy/.env run --rm av-update

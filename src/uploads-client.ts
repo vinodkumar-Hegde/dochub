@@ -64,7 +64,7 @@ export const documentApi = {
   publicationIntent:(id:string,versionId:string,enabled:boolean)=>api<{status:string}>(`/v1/documents/${id}/publication-intent`,'PUT',{versionId,enabled}),
   read: (id: string) => api<DocumentReadResult>(`/v1/documents/${id}/read`),
   studySummary:(id:string,versionId:string)=>api<StudySummary>(`/v1/documents/${id}/study?${new URLSearchParams({versionId})}`),
-  studyPage:(id:string,versionId:string,page:number)=>api<StudyPage>(`/v1/documents/${id}/study/pages/${page}?${new URLSearchParams({versionId})}`),
+  studyPage:(id:string,versionId:string,page:number,signal?:AbortSignal)=>authorizedRequest<StudyPage>(`/v1/documents/${id}/study/pages/${page}?${new URLSearchParams({versionId})}`,{signal}),
   studyInk:(id:string,versionId:string,page:number,revision:number,strokes:StudyStroke[])=>api<{page:number;revision:number;isRead:boolean}>(`/v1/documents/${id}/study/pages/${page}?${new URLSearchParams({versionId})}`,'PUT',{revision,strokes}),
   markStudyPage:(id:string,versionId:string,page:number,isRead:boolean)=>api<{page:number;revision:number;isRead:boolean}>(`/v1/documents/${id}/study/pages/${page}/read?${new URLSearchParams({versionId})}`,'PATCH',{isRead}),
 

@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import Fastify from 'fastify';
 import {PrismaClient,type Prisma} from '@prisma/client';
 import {registerNotifications} from '../src/notifications.js';
-import {notificationAudience} from '../src/notification-delivery.js';
+import {notificationAudienceCount,deliverNotificationBatch} from '../src/notification-delivery.js';
 import {publishDocument} from '../src/document-publication.js';
 import {registerSessions} from '../src/sessions.js';
 import type {Principal} from '../src/auth.js';
@@ -25,17 +25,18 @@ test('notification targeting, files, views and automatic publication',async t=>{
   const admin=()=>{principal={userId:actor.id,roles:['SUPER_ADMIN']}};
   const learner=(id=student.id)=>{principal={userId:id,roles:['STUDENT']}};
   const app=Fastify();registerNotifications(app,scopedDb,async()=>principal,async()=>{});registerSessions(app,scopedDb,async()=>principal);
+  const drain=async()=>{let batches=0;while(await deliverNotificationBatch(scopedDb,1)){assert.ok(++batches<100)}};
   const target={courseIds:[course.id],programmeIds:[programme.id],planIds:plans.map(p=>p.id)};
   const draft={title:'Your course update',body:'Read the attached study checklist.',target,requestId:randomUUID(),attachments:[{name:'checklist.txt',mimeType:'text/plain',base64:Buffer.from('Study checklist').toString('base64')}]};
   let notificationId='',attachmentId='';
   try{
    await t.test('audience deduplicates grants and excludes expired, scheduled, locked and unrelated users',async()=>{
     const r=await app.inject({method:'POST',url:'/v1/admin/notifications/audience',payload:target});assert.equal(r.statusCode,200,r.body);assert.equal(r.json().count,2);
-    assert.deepEqual((await notificationAudience(tx,target)).sort(),[student.id,second.id].sort());
+    assert.equal(await notificationAudienceCount(tx,target),2);
     assert.equal((await app.inject({method:'POST',url:'/v1/admin/notifications/audience',payload:{...target,programmeIds:[randomUUID()]}})).statusCode,422);
    });
    await t.test('send persists text and files once with idempotent retry',async()=>{
-    let r=await app.inject({method:'POST',url:'/v1/admin/notifications',payload:draft});assert.equal(r.statusCode,201,r.body);assert.equal(r.json().recipients,2);notificationId=r.json().id;
+    let r=await app.inject({method:'POST',url:'/v1/admin/notifications',payload:draft});assert.equal(r.statusCode,201,r.body);assert.equal(r.json().recipients,2);notificationId=r.json().id;assert.equal(r.json().queued,true);assert.equal(await tx.notificationRecipient.count({where:{notificationId}}),0);const queuedRetry=await app.inject({method:'POST',url:'/v1/admin/notifications',payload:draft});assert.equal(queuedRetry.json().recipients,2);assert.equal(queuedRetry.json().queued,true);await drain();
     r=await app.inject({method:'POST',url:'/v1/admin/notifications',payload:draft});assert.equal(r.json().id,notificationId);
     assert.equal(await tx.notification.count({where:{eventKey:`custom:${actor.id}:${draft.requestId}`}}),1);
     r=await app.inject({url:`/v1/admin/notifications/${notificationId}`});assert.equal(r.json().viewers,0);attachmentId=r.json().attachments[0].id;assert.equal(r.json().attachments[0].data,undefined);
@@ -64,7 +65,7 @@ test('notification targeting, files, views and automatic publication',async t=>{
    await t.test('material publication creates one regular notification across retries',async()=>{
     const d=await tx.document.create({data:{title:'Test material',courseId:course.id,programmeId:programme.id,subjectId:subject.id,createdById:actor.id,state:'READY',grants:{create:plans.map(p=>({planId:p.id}))}}});
     const v=await tx.documentVersion.create({data:{documentId:d.id,number:1,state:'READY',objectKey:randomUUID(),sizeBytes:123,previewReady:true,pageCount:1}});
-    await publishDocument(tx,d.id,principal);await publishDocument(tx,d.id,principal);
+    await publishDocument(tx,d.id,principal);await publishDocument(tx,d.id,principal);await drain();
     const n=await tx.notification.findUniqueOrThrow({where:{eventKey:`material:${v.id}`},include:{recipients:true}});assert.equal(n.kind,'MATERIAL');assert.equal(n.recipients.length,2);assert.equal(n.sourceId,d.id);
    });
    await t.test('session publication creates one regular update for unchanged repeated publish',async()=>{
@@ -84,7 +85,7 @@ test('notification targeting, files, views and automatic publication',async t=>{
     const unpublished=await tx.liveSession.create({data:fields});
     const old=await tx.liveSession.create({data:{...fields,publishedAt,revision:1,plans:{create:plans.map(p=>({planId:p.id}))}}});
     principal={userId:actor.id,roles:['CONTENT_MANAGER']};
-    let r=await app.inject({method:'POST',url:'/v1/admin/notifications/sync-publications',payload:{}});assert.equal(r.statusCode,200,r.body);assert.equal(r.json().created,2);
+    let r=await app.inject({method:'POST',url:'/v1/admin/notifications/sync-publications',payload:{}});assert.equal(r.statusCode,200,r.body);assert.equal(r.json().created,2);await drain();
     const n=await tx.notification.findUniqueOrThrow({where:{eventKey:`material:${v.id}`},include:{recipients:true}});assert.equal(n.recipients.length,2);assert.equal(n.createdAt.toISOString(),publishedAt.toISOString());
     assert.equal(await tx.notification.count({where:{sourceId:unpublished.id}}),0);assert.equal(await tx.notification.count({where:{sourceId:old.id}}),1);
     r=await app.inject({method:'POST',url:'/v1/admin/notifications/sync-publications',payload:{}});assert.equal(r.statusCode,200);assert.equal(r.json().created,0);admin();
@@ -92,6 +93,22 @@ test('notification targeting, files, views and automatic publication',async t=>{
    await t.test('another content manager cannot read a sender’s viewer identities',async()=>{
     principal={userId:randomUUID(),roles:['CONTENT_MANAGER']};assert.equal((await app.inject({url:`/v1/admin/notifications/${notificationId}`})).statusCode,404);
     assert.equal((await app.inject({url:'/v1/admin/notifications'})).json().total,0);admin();
+   });
+   await t.test('batch delivery rechecks revoked access and never duplicates receipts',async()=>{
+    admin();const r=await app.inject({method:'POST',url:'/v1/admin/notifications',payload:{...draft,requestId:randomUUID()}});assert.equal(r.statusCode,201,r.body);const id=r.json().id;
+    assert.equal(await deliverNotificationBatch(scopedDb,1),true);
+    const job=await tx.notificationDeliveryJob.findUniqueOrThrow({where:{notificationId:id}});
+    const revoked=[student.id,second.id].find(id=>id!==job.cursor)!;await tx.user.update({where:{id:revoked},data:{enabled:false}});
+    await drain();assert.equal(await tx.notificationRecipient.count({where:{notificationId:id}}),1);assert.equal(await tx.notificationRecipient.count({where:{notificationId:id,userId:revoked}}),0);
+    assert.equal((await tx.notificationDeliveryJob.findUniqueOrThrow({where:{notificationId:id}})).delivered,1);
+    await drain();assert.equal(await tx.notificationRecipient.count({where:{notificationId:id}}),1);await tx.user.update({where:{id:revoked},data:{enabled:true}});
+   });
+   await t.test('failed batches retain their cursor and retry without lost or duplicate deliveries',async()=>{
+    admin();const r=await app.inject({method:'POST',url:'/v1/admin/notifications',payload:{...draft,requestId:randomUUID()}});assert.equal(r.statusCode,201,r.body);const id=r.json().id;
+    const failing=new Proxy(scopedDb,{get(target,prop,receiver){if(prop==='$transaction')return async(callback:(client:Prisma.TransactionClient)=>Promise<unknown>)=>callback(new Proxy(tx,{get(inner,key,receiver){if(key==='notificationRecipient')return {createMany:async()=>{throw new Error('Injected batch failure')}};return Reflect.get(inner,key,receiver)}}));return Reflect.get(target,prop,receiver)}}) as PrismaClient;
+    await assert.rejects(deliverNotificationBatch(failing,1),/Injected batch failure/);
+    const failed=await tx.notificationDeliveryJob.findUniqueOrThrow({where:{notificationId:id}});assert.equal(failed.cursor,null);assert.equal(failed.attempts,1);assert.equal(await tx.notificationRecipient.count({where:{notificationId:id}}),0);
+    await tx.notificationDeliveryJob.update({where:{notificationId:id},data:{nextAttemptAt:new Date(Date.now()-1000)}});await drain();assert.equal(await tx.notificationRecipient.count({where:{notificationId:id}}),2);assert.equal((await tx.notificationDeliveryJob.findUniqueOrThrow({where:{notificationId:id}})).completedAt instanceof Date,true);
    });
   }finally{await app.close()}
   throw rollback;

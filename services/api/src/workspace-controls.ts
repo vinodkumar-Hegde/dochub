@@ -3,7 +3,7 @@ import {Prisma,type PrismaClient} from '@prisma/client';
 import type {FastifyInstance,FastifyRequest} from 'fastify';
 import {z} from 'zod';
 import {AuthError,assertRole,type Principal} from './auth.js';
-import {subscriberState} from './academic-lifecycle-policy.js';
+import {analyticsQuery,readAnalytics} from './analytics.js';
 import {normalizeSubscriberEmail} from './subscriber-email.js';
 export const modules=['Analytics','Academic Mapping','Uploads','Sessions','Subscribers','Notifications','Watermark'] as const;
 const permission=z.object({module:z.enum(modules),canView:z.boolean(),canManage:z.boolean()}).strict().refine(p=>!p.canManage||p.canView,'Manage requires View');
@@ -55,26 +55,6 @@ export function registerWorkspaceControls(app:FastifyInstance,db:PrismaClient,au
  });return watermarkSettings(db)});
  app.get('/v1/admin/analytics',async req=>{
   const p=await authenticate(req);assertRole(p,['SUPER_ADMIN','CONTENT_MANAGER']);
-  const q=z.object({courseId:z.string().uuid().optional(),programmeId:z.string().uuid().optional(),planId:z.string().uuid().optional(),status:z.enum(['ALL','ACTIVE','EXPIRED','SCHEDULED','LOCKED']).default('ALL'),from:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).parse(req.query);
-  const from=q.from?new Date(`${q.from}T00:00:00+05:30`):new Date(Date.now()-30*86400000),to=q.to?new Date(`${q.to}T23:59:59.999+05:30`):new Date();if(!Number.isFinite(+from)||!Number.isFinite(+to)||from>to)throw new AuthError(422,'Choose a valid date range');
-  const scope={...(q.courseId?{courseId:q.courseId}:{}),...(q.programmeId?{programmeId:q.programmeId}:{}),...(q.planId?{planId:q.planId}:{})};
-  const [users,docs,sessions,courses,plans,programmes]=await Promise.all([
-   db.user.findMany({where:{roles:{some:{role:'STUDENT'}},...(Object.keys(scope).length?{enrollments:{some:scope}}:{})},include:{enrollments:true,appSessions:{select:{lastSeenAt:true}},materialViews:{where:{lastOpenedAt:{gte:from,lte:to}},select:{documentId:true,lastOpenedAt:true}}}}),
-   db.document.findMany({where:{state:'PUBLISHED',...(q.courseId?{courseId:q.courseId}:{}),...(q.programmeId?{programmeId:q.programmeId}:{}),...(q.planId?{grants:{some:{planId:q.planId}}}:{})},include:{grants:true,materialViews:{where:{lastOpenedAt:{gte:from,lte:to}},select:{userId:true}}}}),
-   db.liveSession.findMany({where:{publishedAt:{not:null},...(q.courseId?{courseId:q.courseId}:{}),...(q.programmeId?{programmeId:q.programmeId}:{}),...(q.planId?{plans:{some:{planId:q.planId}}}:{}),...((q.from||q.to)?{startAt:{gte:from,lte:to}}:{})},select:{id:true,topic:true,courseId:true,programmeId:true,status:true}}),
-   db.academicCourse.findMany({select:{id:true,name:true}}),db.academicPlan.findMany({select:{id:true,name:true}}),db.academicProgramme.findMany({select:{id:true,name:true,courseId:true}}),
-  ]);
-  const students=users.filter(u=>q.status==='ALL'||subscriberState(u.enabled,u.enrollments.filter(g=>(!q.courseId||g.courseId===q.courseId)&&(!q.programmeId||g.programmeId===q.programmeId)&&(!q.planId||g.planId===q.planId)),new Date())===q.status);
-  const events=await db.auditEvent.findMany({where:{actorId:{in:students.map(u=>u.id)},createdAt:{gte:from,lte:to}},select:{actorId:true,targetId:true,createdAt:true,action:true}});
-  const relevant=(g:{courseId:string;programmeId:string;planId:string})=>(!q.courseId||g.courseId===q.courseId)&&(!q.programmeId||g.programmeId===q.programmeId)&&(!q.planId||g.planId===q.planId);
-  const lastActivity=(u:typeof users[number])=>Math.max(0,...u.appSessions.map(s=>+s.lastSeenAt),...u.materialViews.map(v=>+v.lastOpenedAt),...events.filter(e=>e.actorId===u.id).map(e=>+e.createdAt));
-  const engaged=(u:typeof users[number])=>u.appSessions.some(s=>s.lastSeenAt>=from&&s.lastSeenAt<=to)||u.materialViews.length>0||events.some(e=>e.actorId===u.id);
-  const studentIds=new Set(students.map(u=>u.id));
-  const materials=docs.map(d=>{
-   const eligible=students.filter(u=>u.enrollments.some(g=>g.courseId===d.courseId&&g.programmeId===d.programmeId&&g.subjectId===d.subjectId&&d.grants.some(p=>p.planId===g.planId)&&relevant(g)));
-   const eligibleIds=new Set(eligible.map(u=>u.id)),opened=new Set([...d.materialViews.filter(v=>studentIds.has(v.userId)&&eligibleIds.has(v.userId)).map(v=>v.userId),...events.filter(e=>e.targetId===d.id&&e.actorId&&eligibleIds.has(e.actorId)&&['DOCUMENT_PREVIEW_AUTHORIZED','DOCUMENT_READ_AUTHORIZED'].includes(e.action)).map(e=>e.actorId!)]);
-   return {id:d.id,title:d.title,programme:programmes.find(p=>p.id===d.programmeId)?.name??'Programme',opened:opened.size,notOpened:eligible.length-opened.size};
-  });
-  return {courseCoverage:courses.filter(c=>!q.courseId||c.id===q.courseId).map(c=>({id:c.id,name:c.name,pdfs:docs.filter(d=>d.courseId===c.id).length,sessions:sessions.filter(s=>s.courseId===c.id).length})),period:{from,to},students:students.length,engaged:students.filter(engaged).length,inactive:students.filter(u=>!engaged(u)).map(u=>({id:u.id,name:u.displayName,email:u.email,status:subscriberState(u.enabled,u.enrollments,new Date()),lastSeen:lastActivity(u)?new Date(lastActivity(u)).toISOString():null})),byCourse:courses.map(c=>({id:c.id,name:c.name,count:students.filter(u=>u.enrollments.some(g=>g.courseId===c.id&&relevant(g))).length})).filter(c=>c.count),byPlan:plans.map(p=>({id:p.id,name:p.name,count:students.filter(u=>u.enrollments.some(g=>g.planId===p.id&&relevant(g))).length})).filter(p=>p.count),materials,byProgramme:programmes.filter(p=>!q.courseId||p.courseId===q.courseId).filter(p=>!q.programmeId||p.id===q.programmeId).map(p=>({id:p.id,name:p.name,pdfs:docs.filter(d=>d.programmeId===p.id).length,sessions:sessions.filter(s=>s.programmeId===p.id).length})),sessions:sessions.length};
+  return readAnalytics(db,analyticsQuery.parse(req.query));
  });
 }

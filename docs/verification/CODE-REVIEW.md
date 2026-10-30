@@ -46,3 +46,7 @@ Repository: https://github.com/vinodkumar-Hegde/dochub (private), default branch
 ## Subsequent capacity assessment
 
 The [80,000-student / 10,000-active capacity review](CAPACITY-80000.md) found a reproducible admin analytics HTTP 500 at dataset scale. The earlier functional-test pass does not establish capacity readiness. See that report for measured results and release blockers.
+
+## Capacity fixes
+
+The analytics failure and primary application-level scaling issues described above are addressed in [CAPACITY-FIXES.md](CAPACITY-FIXES.md). This includes new migration/worker requirements and measured local results. Production-like 10,000-active-user mixed-workload validation remains a release gate.

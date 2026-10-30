@@ -11,6 +11,7 @@ x-api: &api
     SES_FROM_EMAIL: ${SES_FROM_EMAIL:?Set SES_FROM_EMAIL}
     MAX_PDF_BYTES: ${MAX_PDF_BYTES:-10737418240}
     PDF_RENDER_CONCURRENCY: ${PDF_RENDER_CONCURRENCY:-2}
+    NOTIFICATION_BATCH_SIZE: ${NOTIFICATION_BATCH_SIZE:-1000}
     PDF_UPLOAD_CONCURRENCY: ${PDF_UPLOAD_CONCURRENCY:-2}
     PDF_VERIFICATION_POLICY: ${PDF_VERIFICATION_POLICY:-clamav-poppler-v1}
     PREVIEW_CDN_ORIGIN: ${PREVIEW_CDN_ORIGIN:-}
@@ -84,6 +85,10 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+  notification-worker:
+    <<: *api
+    command: [node, dist/notification-worker.js]
+    stop_grace_period: 20s
   worker:
     <<: *api
     command: [node, dist/worker.js]
@@ -92,6 +97,8 @@ services:
   web:
     image: dochub-web:${IMAGE_TAG:-local}
     build: .
+    environment:
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
     ports: ['127.0.0.1:${WEB_PORT:-8080}:8080']
     depends_on:
       api: {condition: service_healthy}

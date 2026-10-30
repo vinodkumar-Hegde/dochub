@@ -21,9 +21,9 @@ export default function AuthGate(){
  const refreshAccount=()=>{void emailOtpSession().then(next=>{if(next)setAccount(next);else{setAccount(null);initialization=null}})};
  useEffect(()=>{
   if(!account)return;let alive=true;
-  const refresh=()=>{void emailOtpSession().then(next=>{if(alive){setAccount(next);if(!next)initialization=null}}).catch(()=>{})};
-  const timer=setInterval(refresh,30000);window.addEventListener('focus',refresh);
-  return()=>{alive=false;clearInterval(timer);window.removeEventListener('focus',refresh)};
+  const refresh=()=>{if(document.visibilityState!=='visible')return;void emailOtpSession().then(next=>{if(alive){setAccount(next);if(!next)initialization=null}}).catch(()=>{})};
+  const timer=setInterval(refresh,60000+Math.floor(Math.random()*10000));window.addEventListener('focus',refresh);window.addEventListener('dochub:account-invalidated',refresh);
+  return()=>{alive=false;clearInterval(timer);window.removeEventListener('focus',refresh);window.removeEventListener('dochub:account-invalidated',refresh)};
  },[Boolean(account)]);
  const signOut=async()=>{setBusy(true);try{await emailOtpLogout();logout();initialization=null;setAccount(null);setSelected(null);setShowProfile(false);setChallenge('');setCode('');setError('')}catch(cause){setError(cause instanceof Error?cause.message:'Unable to sign out')}finally{setBusy(false)}};
  const sendCode=async()=>{
