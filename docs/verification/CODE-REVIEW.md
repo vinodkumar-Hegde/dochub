@@ -38,3 +38,7 @@ The separate synthetic large-PDF benchmark is documented in `2026-10-30-reader-a
 Configure and test the target environment's IAM roles, SES delivery, bucket/CORS/KMS permissions, queue/DLQ, TLS, database backups/restores, signature-update scheduling, monitoring and real representative PDF upload/publication. API readiness checks database connectivity, not AWS readiness. Browser/integration fixtures mock cloud services and do not send real messages. Run container OS/image scanning in your registry; npm audit does not scan Debian/nginx packages.
 
 Configure GitHub repository branch protection and environment reviewers after the remote repository is selected. The repository workflow does not deploy to production. Keep dev/prod secrets and resources separate. See `../operations/DEVOPS-HANDOFF.md` for commands and release/rollback order.
+
+## GitHub publication
+
+Repository: https://github.com/vinodkumar-Hegde/dochub (private), default branch dev, release branch prod. Hosted verification run https://github.com/vinodkumar-Hegde/dochub/actions/runs/40987335091 was blocked before any steps ran by an account billing/spending-limit error. Local checks above passed; hosted CI is still pending. Branch protection also requires a GitHub plan supporting private-repository protection and could not be enabled on the current plan.

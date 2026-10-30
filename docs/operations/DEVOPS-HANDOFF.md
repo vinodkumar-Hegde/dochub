@@ -150,3 +150,5 @@ If Docker reports exhausted default address pools, select an unused subnet in a 
 ## Repository
 
 Private repository: https://github.com/vinodkumar-Hegde/dochub. Default branch: `dev`; release branch: `prod`. The initial branch-protection API requests were rejected because this account requires GitHub Pro for private-repository protection. Upgrade the account or move to an organization plan that supports it, then enable the PR/check/review policies described above. Keep the repository private. The Verify workflow also supports manual runs from the Actions tab.
+
+The first manually dispatched hosted CI run did not execute any steps: GitHub reported failed account payments or an insufficient spending limit. Resolve GitHub Billing & plans (or supply an approved runner), then re-run `gh workflow run ci.yml --repo vinodkumar-Hegde/dochub --ref dev` and verify both jobs pass before release. Local verification evidence is in `../verification/CODE-REVIEW.md`; it is not a hosted CI pass.

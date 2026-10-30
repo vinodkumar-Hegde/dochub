@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16-bookworm
@@ -59,7 +59,7 @@ jobs:
           path: test-results/
       - run: npm audit --audit-level=moderate && npm audit --prefix services/api --audit-level=moderate
   containers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       IMAGE_TAG: ci
       NODE_ENV: development
